@@ -81,6 +81,7 @@ public abstract class BaseCommands implements CommandsInterface {
     protected RegistrantList mSubscriptionStatusRegistrants = new RegistrantList();
     protected RegistrantList mSrvccStateRegistrants = new RegistrantList();
     protected RegistrantList mHardwareConfigChangeRegistrants = new RegistrantList();
+    protected RegistrantList mModemCapRegistrants = new RegistrantList();
     protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
     //MTK-START Support Multi-Application
     protected RegistrantList mSessionChangedRegistrants = new RegistrantList();
@@ -943,6 +944,20 @@ public abstract class BaseCommands implements CommandsInterface {
     //MTK-END [mtk06800] modem power on/off
 
     protected void onRadioAvailable() {
+    }
+
+    public void getModemCapability(Message response) {
+    }
+
+    public void updateStackBinding(int stackId, int enable, Message response) {
+    }
+
+    public void registerForModemCapEvent(Handler h, int what, Object obj) {
+        mModemCapRegistrants.addUnique(h, what, obj);
+    }
+
+    public void unregisterForModemCapEvent(Handler h) {
+        mModemCapRegistrants.remove(h);
     }
 
     /**

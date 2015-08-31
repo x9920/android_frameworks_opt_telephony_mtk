@@ -4366,6 +4366,24 @@ if (SystemProperties.get("ro.mtk_tc1_feature").equals("1")) {
         }
     }
 
+    final public class UnsolOemHookBuffer {
+        private int mRilInstance;
+        private byte[] mData;
+
+        public UnsolOemHookBuffer(int rilInstance, byte[] data) {
+            mRilInstance = rilInstance;
+            mData = data;
+        }
+
+        public int getRilInstance() {
+            return mRilInstance;
+        }
+
+        public byte[] getUnsolOemHookBuffer() {
+            return mData;
+        }
+    }
+
     private Object
     responseInts(Parcel p) {
         int numInts;
@@ -7903,7 +7921,35 @@ if (SystemProperties.get("ro.mtk_tc1_feature").equals("1")) {
 
         return result;
     }
-    
+
+    // @Override
+    public void setLocalCallHold(int lchStatus) {
+        byte[] payload = new byte[]{(byte)(lchStatus & 0x7F)};
+        Rlog.d(RILJ_LOG_TAG, "setLocalCallHold: lchStatus is " + lchStatus);
+
+        // sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_SET_LOCAL_CALL_HOLD, 1, payload, null);
+        Rlog.e(RILJ_LOG_TAG, "setLocalCallHold: stub!");
+    }
+
+    @Override
+    public void getModemCapability(Message response) {
+        Rlog.d(RILJ_LOG_TAG, "GetModemCapability");
+        // sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_GET_MODEM_CAPABILITY, 0, null, response);
+        Rlog.w(RILJ_LOG_TAG, "GetModemCapability: not really implemented!");
+        AsyncResult.forMessage(response, null, CommandException.fromRilErrno(REQUEST_NOT_SUPPORTED));
+        response.sendToTarget();
+    }
+
+    @Override
+    public void updateStackBinding(int stack, int enable, Message response) {
+        byte[] payload = new byte[]{(byte)stack,(byte)enable};
+        Rlog.d(RILJ_LOG_TAG, "UpdateStackBinding: on Stack: " + stack +
+                ", enable/disable: " + enable);
+
+        // sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_UPDATE_SUB_BINDING, 2, payload, response);
+        Rlog.e(RILJ_LOG_TAG, "UpdateStackBinding: stub!");
+    }
+
     //UTK started
     public void getUtkLocalInfo(Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_LOCAL_INFO, result);

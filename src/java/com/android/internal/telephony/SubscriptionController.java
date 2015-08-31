@@ -40,6 +40,7 @@ import android.provider.BaseColumns;
 import android.provider.Settings;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.provider.Settings.SettingNotFoundException;
 
 import com.android.internal.telephony.ISub;
 import com.android.internal.telephony.uicc.SpnOverride;
@@ -57,6 +58,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -134,6 +136,16 @@ public class SubscriptionController extends ISub.Stub {
     protected Context mContext;
     protected TelephonyManager mTelephonyManager;
     protected CallManager mCM;
+
+    // When no valid SIM cards present on device, framework returns DUMMY subIds
+    // with range starting from DUMMY_SUB_ID_BASE.
+    private static final int DUMMY_SUB_ID_BASE = SubscriptionManager.MAX_SUBSCRIPTION_ID_VALUE
+        - PhoneConstants.MAX_PHONE_COUNT_TRI_SIM;
+
+    // FIXME: Does not allow for multiple subs in a slot and change to SparseArray
+    private static HashMap<Integer, Integer> mSlotIdxToSubId = new HashMap<Integer, Integer>();
+    private static int mDefaultFallbackSubId = DUMMY_SUB_ID_BASE;
+    private boolean mSubInfoReady = false;
 
     private static final int RES_TYPE_BACKGROUND_DARK = 0;
     private static final int RES_TYPE_BACKGROUND_LIGHT = 1;
@@ -1366,6 +1378,27 @@ public class SubscriptionController extends ISub.Stub {
 
     }
 
+    private int[] getDummySubIds(int slotIdx) {
+        // FIXME: Remove notion of Dummy SUBSCRIPTION_ID.
+        // I tested this returning null as no one appears to care,
+        // but no connection came up on sprout with two sims.
+        // We need to figure out why and hopefully remove DummySubsIds!!!
+        int numSubs = getActiveSubInfoCountMax();
+        if (numSubs > 0) {
+            int[] dummyValues = new int[numSubs];
+            for (int i = 0; i < numSubs; i++) {
+                dummyValues[i] = DUMMY_SUB_ID_BASE + slotIdx;
+            }
+            if (DBG) {
+                logd("getDummySubIds: slotIdx=" + slotIdx
+                    + " return " + numSubs + " DummySubIds with each subId=" + dummyValues[0]);
+            }
+            return dummyValues;
+        } else {
+            return null;
+        }
+    }
+
     /**
      * @return the number of records cleared
      */
@@ -1505,6 +1538,32 @@ public class SubscriptionController extends ISub.Stub {
         return subId;
     }
 
+    /* Returns User SMS Prompt property,  enabled or not */
+    @Override
+    public boolean isSMSPromptEnabled() {
+        boolean prompt = false;
+        int value = 0;
+        try {
+            value = Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.MULTI_SIM_SMS_PROMPT);
+        } catch (SettingNotFoundException snfe) {
+            loge("Settings Exception Reading Dual Sim SMS Prompt Values");
+        }
+        prompt = (value == 0) ? false : true ;
+        if (VDBG) logd("SMS Prompt option:" + prompt);
+
+       return prompt;
+    }
+
+    /*Sets User SMS Prompt property,  enable or not */
+    @Override
+    public void setSMSPromptEnabled(boolean enabled) {
+        int value = (enabled == false) ? 0 : 1;
+        Settings.Global.putInt(mContext.getContentResolver(),
+                Settings.Global.MULTI_SIM_SMS_PROMPT, value);
+        logd("setSMSPromptOption to " + enabled);
+    }
+
     @Override
     public int getDefaultDataSubId() {
         int subId = Settings.Global.getInt(mContext.getContentResolver(),
@@ -1529,6 +1588,11 @@ public class SubscriptionController extends ISub.Stub {
         updateAllDataConnectionTrackers();
     }
 
+    public void setDataSubId(int subId) {
+        Settings.Global.putInt(mContext.getContentResolver(),
+                Settings.Global.MULTI_SIM_DATA_CALL_SUBSCRIPTION, subId);
+    }
+
     private void updateAllDataConnectionTrackers() {
         // Tell Phone Proxies to update data connection tracker
         int len = sProxyPhones.length;
@@ -1546,6 +1610,43 @@ public class SubscriptionController extends ISub.Stub {
         intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
         intent.putExtra(PhoneConstants.SUBSCRIPTION_KEY, subId);
         mContext.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+    }
+
+    /* Sets the default subscription. If only one sub is active that
+     * sub is set as default subId. If two or more  sub's are active
+     * the first sub is set as default subscription
+     */
+    private void setDefaultFallbackSubId(int subId) {
+        if (subId == SubscriptionManager.DEFAULT_SUBSCRIPTION_ID) {
+            throw new RuntimeException("setDefaultSubId called with DEFAULT_SUB_ID");
+        }
+        if (DBG) logdl("[setDefaultFallbackSubId] subId=" + subId);
+        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+            int phoneId = getPhoneId(subId);
+            if (phoneId >= 0 && (phoneId < TelephonyManager.getDefault().getPhoneCount()
+                    || TelephonyManager.getDefault().getSimCount() == 1)) {
+                if (DBG) logdl("[setDefaultFallbackSubId] set mDefaultFallbackSubId=" + subId);
+                mDefaultFallbackSubId = subId;
+                // Update MCC MNC device configuration information
+                String defaultMccMnc = TelephonyManager.getDefault().getSimOperator(phoneId);
+                MccTable.updateMccMncConfiguration(mContext, defaultMccMnc, false);
+
+                // Broadcast an Intent for default sub change
+                Intent intent = new Intent(TelephonyIntents.ACTION_DEFAULT_SUBSCRIPTION_CHANGED);
+                intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
+                SubscriptionManager.putPhoneIdAndSubIdExtra(intent, phoneId, subId);
+                if (DBG) {
+                    logdl("[setDefaultFallbackSubId] broadcast default subId changed phoneId=" + phoneId
+                            + " subId=" + subId);
+                }
+                mContext.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+            } else {
+                if (DBG) {
+                    logdl("[setDefaultFallbackSubId] not set invalid phoneId=" + phoneId
+                            + " subId=" + subId);
+                }
+            }
+        }
     }
 
     /* Sets the default subscription. If only one sub is active that
@@ -1721,6 +1822,197 @@ public class SubscriptionController extends ISub.Stub {
 
         logdl("[getActiveSubIdList] X subIdArr.length=" + subIdArr.length);
         return subIdArr;
+    }
+
+    @Override
+    public void activateSubId(int subId) {
+        if (getSubState(subId) == SubscriptionManager.ACTIVE) {
+            logd("activateSubId: subscription already active, subId = " + subId);
+            return;
+        }
+
+        int slotId = getSlotId(subId);
+        SubscriptionHelper.getInstance().setUiccSubscription(slotId, SubscriptionManager.ACTIVE);
+    }
+
+    @Override
+    public void deactivateSubId(int subId) {
+        if (getSubState(subId) == SubscriptionManager.INACTIVE) {
+            logd("activateSubId: subscription already deactivated, subId = " + subId);
+            return;
+        }
+
+        int slotId = getSlotId(subId);
+        SubscriptionHelper.getInstance().setUiccSubscription(slotId, SubscriptionManager.INACTIVE);
+    }
+
+    public void setNwMode(int subId, int nwMode) {
+        logd("setNwMode, nwMode: " + nwMode + " subId: " + subId);
+        ContentValues value = new ContentValues(1);
+        value.put(SubscriptionManager.NETWORK_MODE, nwMode);
+        mContext.getContentResolver().update(SubscriptionManager.CONTENT_URI,
+                value, BaseColumns._ID + "=" + Integer.toString(subId), null);
+    }
+
+    public int getNwMode(int subId) {
+        SubscriptionInfo subInfo = getActiveSubscriptionInfo(subId);
+        if (subInfo != null)  {
+            return subInfo.mNwMode;
+        } else {
+            loge("getNwMode: invalid subId = " + subId);
+            return SubscriptionManager.DEFAULT_NW_MODE;
+        }
+    }
+
+    /* {@hide} */
+    public void setUserNwMode(int subId, int nwMode) {
+        logd("setUserNwMode, nwMode: " + nwMode + " subId: " + subId);
+        ContentValues value = new ContentValues(1);
+        value.put(SubscriptionManager.USER_NETWORK_MODE, nwMode);
+        mContext.getContentResolver().update(SubscriptionManager.CONTENT_URI,
+                value, BaseColumns._ID + "=" + Integer.toString(subId), null);
+    }
+
+    /* {@hide} */
+    public int getUserNwMode(int subId) {
+        SubscriptionInfo subInfo = getActiveSubscriptionInfo(subId);
+        if (subInfo != null)  {
+            return subInfo.mUserNwMode;
+        } else {
+            loge("getUserNwMode: invalid subId = " + subId);
+            return SubscriptionManager.DEFAULT_NW_MODE;
+        }
+    }
+
+    @Override
+    public int setSubState(int subId, int subStatus) {
+        int result = 0;
+        logd("setSubState, subStatus: " + subStatus + " subId: " + subId);
+        if (ModemStackController.getInstance().isStackReady()) {
+            ContentValues value = new ContentValues(1);
+            value.put(SubscriptionManager.SUB_STATE, subStatus);
+            result = mContext.getContentResolver().update(SubscriptionManager.CONTENT_URI,
+                    value, BaseColumns._ID + "=" + Integer.toString(subId), null);
+
+        }
+        Intent intent = new Intent(TelephonyIntents.ACTION_SUBINFO_CONTENT_CHANGE);
+        intent.putExtra(BaseColumns._ID, subId);
+        intent.putExtra(TelephonyIntents.EXTRA_COLUMN_NAME, SubscriptionManager.SUB_STATE);
+        intent.putExtra(TelephonyIntents.EXTRA_INT_CONTENT, subStatus);
+        intent.putExtra(TelephonyIntents.EXTRA_STRING_CONTENT, "None");
+        mContext.sendBroadcast(intent);
+        intent = new Intent(TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED);
+        mContext.sendBroadcast(intent);
+
+        return result;
+    }
+
+    @Override
+    public int getSubState(int subId) {
+        SubscriptionInfo subInfo = getActiveSubscriptionInfo(subId);
+        int subStatus = SubscriptionManager.INACTIVE;
+
+        // Consider the subStatus from subInfo record only if the
+        //  record is associated with a valid slot Id.
+        if ((subInfo != null) && (subInfo.getSimSlotIndex() >= 0)) {
+            subStatus = subInfo.mStatus;
+        }
+        return subStatus;
+    }
+
+    /* setDds flag is used to trigger DDS switch request during
+      device powerUp and when flex map performed */
+    public void updateUserPrefs(boolean setDds) {
+        List<SubscriptionInfo> subInfoList = getActiveSubscriptionInfoList();
+        int mActCount = 0;
+        SubscriptionInfo mNextActivatedSub = null;
+
+        if (subInfoList == null) {
+            int[] dummySubId = getDummySubIds(mDefaultPhoneId);
+            logd("updateUserPrefs: subscription are not avaiable dds = " + getDefaultDataSubId()
+                     + " voice = " + getDefaultVoiceSubId() + " sms = " + getDefaultSmsSubId() +
+                     " setDDs = " + setDds);
+            // If no SIM cards present on device, set dummy subId
+            // as data/sms/voice preferred subId.
+            setDefaultFallbackSubId(dummySubId[0]);
+            setDefaultVoiceSubId(dummySubId[0]);
+            setDefaultSmsSubId(dummySubId[0]);
+            setDataSubId(dummySubId[0]);
+            return;
+        }
+
+        //Get num of activated Subs and next available activated sub info.
+        for (SubscriptionInfo subInfo : subInfoList) {
+            if (getSubState(subInfo.getSubscriptionId()) == SubscriptionManager.ACTIVE) {
+                mActCount++;
+                if (mNextActivatedSub == null) mNextActivatedSub = subInfo;
+            }
+        }
+
+        logd("updateUserPrefs: active sub count = " + mActCount + " dds = " + getDefaultDataSubId()
+                 + " voice = " + getDefaultVoiceSubId() + " sms = "
+                 + getDefaultSmsSubId() + " setDDs = " + setDds);
+        //if activated sub count is less than 2, disable prompt.
+        if (mActCount < 2) {
+            setSMSPromptEnabled(false);
+            setVoicePromptEnabled(false);
+        }
+
+        //if there are no activated subs available, no need to update. EXIT.
+        if (mNextActivatedSub == null) return;
+
+        if (getSubState(getDefaultSubId()) == SubscriptionManager.INACTIVE) {
+            setDefaultFallbackSubId(mNextActivatedSub.getSubscriptionId());
+        }
+
+        int ddsSubId = getDefaultDataSubId();
+        int ddsSubState = getSubState(ddsSubId);
+        //if current data sub is not active, fallback to next active sub.
+        if (setDds || (ddsSubState == SubscriptionManager.INACTIVE)) {
+            if (ddsSubState == SubscriptionManager.INACTIVE) ddsSubId
+                    = mNextActivatedSub.getSubscriptionId();
+            setDefaultDataSubId(ddsSubId);
+        }
+        //if current voice sub is not active and prompt not enabled, fallback to next active sub.
+        if (getSubState(getDefaultVoiceSubId()) == SubscriptionManager.INACTIVE &&
+            !isVoicePromptEnabled()) {
+            setDefaultVoiceSubId(mNextActivatedSub.getSubscriptionId());
+        }
+        //if current sms sub is not active and prompt not enabled, fallback to next active sub.
+        if (getSubState(getDefaultSmsSubId()) == SubscriptionManager.INACTIVE &&
+            !isSMSPromptEnabled()) {
+            setDefaultSmsSubId(mNextActivatedSub.getSubscriptionId());
+        }
+        logd("updateUserPrefs: after currentDds = " + getDefaultDataSubId() + " voice = " +
+                 getDefaultVoiceSubId() + " sms = " + getDefaultSmsSubId() +
+                 " newDds = " + ddsSubId);
+
+    }
+
+    /* Returns User Voice Prompt property,  enabled or not */
+    @Override
+    public boolean isVoicePromptEnabled() {
+        boolean prompt = false;
+        int value = 0;
+        try {
+            value = Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.MULTI_SIM_VOICE_PROMPT);
+        } catch (SettingNotFoundException snfe) {
+            loge("Settings Exception Reading Dual Sim Voice Prompt Values");
+        }
+        prompt = (value == 0) ? false : true ;
+        if (VDBG) logd("Voice Prompt option:" + prompt);
+
+       return prompt;
+    }
+
+    /*Sets User SMS Prompt property,  enable or not */
+    @Override
+    public void setVoicePromptEnabled(boolean enabled) {
+        int value = (enabled == false) ? 0 : 1;
+        Settings.Global.putInt(mContext.getContentResolver(),
+                Settings.Global.MULTI_SIM_VOICE_PROMPT, value);
+        logd("setVoicePromptOption to " + enabled);
     }
 
     private static void printStackTrace(String msg) {
