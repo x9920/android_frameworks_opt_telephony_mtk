@@ -71,9 +71,14 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     public void changeBarringPassword(String facility, String oldPwd,
             String newPwd, Message result) {
     }
+    /* M: SS part */
+    public void changeBarringPassword(String facility, String oldPwd, String newPwd,
+        String newCfm , Message result) {
+    }
+    /* M: SS part end */
 
     @Override
-    public void supplyDepersonalization(String netpin, String type,  Message result) {
+    public void supplyNetworkDepersonalization(String netpin, Message result) {
     }
 
     @Override
@@ -256,12 +261,6 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setupDataCall(String radioTechnology, String profile,
-            String apn, String user, String password, String authType,
-            String protocol, Message result) {
-    }
-
-    @Override
     public void deactivateDataCall(int cid, int reason, Message result) {
     }
 
@@ -304,6 +303,19 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     @Override
     public void setCLIR(int clirMode, Message result) {
     }
+    /* M: SS part */
+    public void setCLIP(boolean enable, Message result) {
+    }
+
+    public void getCOLR(Message response) {
+    }
+
+    public void setCOLP(boolean enable, Message response) {
+    }
+
+    public void getCOLP(Message response) {
+    }
+    /* M: SS part end */
 
     @Override
     public void queryCallWaiting(int serviceClass, Message response) {
@@ -411,7 +423,7 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
 
     @Override
     public void handleCallSetupRequestFromSim(
-            boolean accept, Message response) {
+            boolean accept, int resCode, Message response) {
     }
 
     @Override
@@ -566,6 +578,33 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+    }
+
+    @Override
+    public void setDataProfile(DataProfile[] dps, Message result) {
+    }
+
+    @Override
+    public void iccOpenLogicalChannel(String AID, Message response) {
+    }
+
+    @Override
+    public void iccCloseLogicalChannel(int channel, Message response) {
+    }
+
+    @Override
+    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
+            int p1, int p2, int p3, String data, Message response) {
+    }
+
+    @Override
+    public void iccTransmitApduBasicChannel(int cla, int instruction, int p1, int p2,
+            int p3, String data, Message response) {
+    }
+
+    @Override
     public void nvReadItem(int itemID, Message response) {
     }
 
@@ -589,5 +628,70 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     public void requestShutdown(Message result) {
     }
 
-    public boolean needsOldRilFeature(String feature) { return false; }
+    // Added by M begin
+    @Override
+    public void iccGetATR(Message response) {
+    }
+
+    @Override
+    public void iccOpenChannelWithSw(String AID, Message result){
+    }
+    // Added by M end
+
+    @Override
+    public void setTrm(int mode, Message result) {
+    }
+
+    @Override
+    public void setOnPlmnChangeNotification(Handler h, int what, Object obj) {
+    }
+
+    @Override
+    public void unSetOnPlmnChangeNotification(Handler h) {
+    }
+
+    @Override
+    public void setOnRegistrationSuspended(Handler h, int what, Object obj) {
+    }
+
+    @Override
+    public void unSetOnRegistrationSuspended(Handler h) {
+    }
+
+    @Override
+    public void setResumeRegistration(int sessionId, Message response) {
+    }
+
+    @Override
+    public void queryModemType(Message response) {
+    }
+
+    @Override
+    public void storeModemType(int modemType, Message response) {
+    }
+
+    // M: Fast Dormancy
+    public void setScri(boolean forceRelease, Message response) {
+    }
+
+    public void setFDMode(int mode, int parameter1, int parameter2, Message response) {
+    }
+    
+    //UTK start
+    public void getUtkLocalInfo(Message response) {
+    }
+    
+    public void requestUtkRefresh(int type, Message response) {
+    }
+    
+    public void reportUtkServiceIsRunning(Message result) {
+    }
+    
+    public void profileDownload(String profile, Message response) {
+    }    
+
+    public void handleCallSetupRequestFromUim(boolean accept, Message response) {
+    }
+    //UTK end
+
 }

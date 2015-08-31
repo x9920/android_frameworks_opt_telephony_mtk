@@ -72,6 +72,11 @@ public final class CdmaMmiCode  extends Handler implements MmiCode {
     State mState = State.PENDING;
     CharSequence mMessage;
 
+    //For ALPS01471897
+    private boolean mUserInitiatedMMI = false;
+    //end
+
+
     // Class Variables
 
     static Pattern sPatternSuppService = Pattern.compile(
@@ -147,6 +152,7 @@ public final class CdmaMmiCode  extends Handler implements MmiCode {
         mPhone = phone;
         mContext = phone.getContext();
         mUiccApplication = app;
+        mUserInitiatedMMI = false;
     }
 
     // MmiCode implementation
@@ -166,6 +172,16 @@ public final class CdmaMmiCode  extends Handler implements MmiCode {
     public Phone
     getPhone() {
         return ((Phone) mPhone);
+    }
+
+    //For ALPS01471897
+    public void setUserInitiatedMMI(boolean userinit)
+    {
+       mUserInitiatedMMI = userinit;
+    }
+
+    public boolean getUserInitiatedMMI() {
+      return mUserInitiatedMMI;
     }
 
     // inherited javadoc suffices

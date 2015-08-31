@@ -19,7 +19,6 @@ package com.android.internal.telephony;
 import android.content.Context;
 import android.net.LinkProperties;
 import android.net.NetworkCapabilities;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.telephony.CellInfo;
@@ -33,9 +32,21 @@ import com.android.internal.telephony.test.SimulatedRadioControl;
 import com.android.internal.telephony.uicc.IsimRecords;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UsimServiceTable;
+
 import com.android.internal.telephony.PhoneConstants.*; // ????
 
 import java.util.List;
+import com.mediatek.internal.telephony.FemtoCellInfo;
+import com.mediatek.internal.telephony.NetworkInfoWithAcT;
+
+//VoLTE
+import com.mediatek.internal.telephony.DefaultBearerConfig;
+import com.mediatek.internal.telephony.TftStatus;
+import com.mediatek.internal.telephony.PcscfInfo;
+import com.mediatek.internal.telephony.DedicateBearerProperties;
+import com.mediatek.internal.telephony.QosStatus;
+import com.android.internal.telephony.dataconnection.DcFailCause;
+
 
 /**
  * Internal interface used to control the phone; SDK developers cannot
@@ -79,6 +90,14 @@ public interface Phone {
     static final String FEATURE_ENABLE_CBS = "enableCBS";
     static final String FEATURE_ENABLE_EMERGENCY = "enableEmergency";
 
+    /** M: start */
+    static final String FEATURE_ENABLE_DM = "enableDM";
+    static final String FEATURE_ENABLE_WAP = "enableWAP";
+    static final String FEATURE_ENABLE_NET = "enableNET";
+    static final String FEATURE_ENABLE_CMMAIL = "enableCMMAIL";
+    static final String FEATURE_ENABLE_RCSE = "enableRCSE";
+    /** M: end */
+
     /**
      * Optional reasons for disconnect and connect
      */
@@ -106,10 +125,10 @@ public interface Phone {
     static final String REASON_DATA_DEPENDENCY_UNMET = "dependencyUnmet";
     static final String REASON_LOST_DATA_CONNECTION = "lostDataConnection";
     static final String REASON_CONNECTED = "connected";
-    static final String REASON_NV_READY = "nvReady";
     static final String REASON_SINGLE_PDN_ARBITRATION = "SinglePdnArbitration";
     static final String REASON_DATA_SPECIFIC_DISABLED = "specificDisabled";
-    static final String REASON_IWLAN_AVAILABLE = "iwlanAvailable";
+    static final String REASON_FDN_ENABLED = "FdnEnabled";
+    static final String REASON_FDN_DISABLED = "FdnDisabled";
 
     // Used for band mode selection methods
     static final int BM_UNSPECIFIED = 0; // selected by baseband automatically
@@ -139,19 +158,6 @@ public interface Phone {
     int NT_MODE_LTE_ONLY                 = RILConstants.NETWORK_MODE_LTE_ONLY;
     int NT_MODE_LTE_WCDMA                = RILConstants.NETWORK_MODE_LTE_WCDMA;
     int PREFERRED_NT_MODE                = RILConstants.PREFERRED_NETWORK_MODE;
-
-    int NT_MODE_TD_SCDMA_ONLY            = RILConstants.NETWORK_MODE_TD_SCDMA_ONLY;
-    int NT_MODE_TD_SCDMA_WCDMA           = RILConstants.NETWORK_MODE_TD_SCDMA_WCDMA;
-    int NT_MODE_TD_SCDMA_LTE             = RILConstants.NETWORK_MODE_TD_SCDMA_LTE;
-    int NT_MODE_TD_SCDMA_GSM             = RILConstants.NETWORK_MODE_TD_SCDMA_GSM;
-    int NT_MODE_TD_SCDMA_GSM_LTE         = RILConstants.NETWORK_MODE_TD_SCDMA_GSM_LTE;
-    int NT_MODE_TD_SCDMA_GSM_WCDMA       = RILConstants.NETWORK_MODE_TD_SCDMA_GSM_WCDMA;
-    int NT_MODE_TD_SCDMA_WCDMA_LTE       = RILConstants.NETWORK_MODE_TD_SCDMA_WCDMA_LTE;
-    int NT_MODE_TD_SCDMA_GSM_WCDMA_LTE   = RILConstants.NETWORK_MODE_TD_SCDMA_GSM_WCDMA_LTE;
-    int NT_MODE_TD_SCDMA_CDMA_EVDO_GSM_WCDMA =
-            RILConstants.NETWORK_MODE_TD_SCDMA_CDMA_EVDO_GSM_WCDMA;
-    int NT_MODE_TD_SCDMA_LTE_CDMA_EVDO_GSM_WCDMA =
-            RILConstants.NETWORK_MODE_TD_SCDMA_LTE_CDMA_EVDO_GSM_WCDMA;
 
     // Used for CDMA roaming mode
     static final int CDMA_RM_HOME        = 0;  // Home Networks only, as defined in PRL
@@ -291,13 +297,6 @@ public interface Phone {
     String[] getActiveApnTypes();
 
     /**
-     * Check if TETHER_DUN_APN setting or config_tether_apndata includes APN that matches
-     * current operator.
-     * @return true if there is a matching DUN APN.
-     */
-    boolean hasMatchedTetherApnSetting();
-
-    /**
      * Returns string for the active APN host.
      *  @return type as a string or null if none.
      */
@@ -345,6 +344,7 @@ public interface Phone {
      * Unregisters for handover state notifications
      */
     void unregisterForHandoverStateChanged(Handler h);
+
     /**
      * Register for getting notifications for change in the Call State {@link Call.State}
      * This is called PreciseCallState because the call state is more precise than the
@@ -382,22 +382,6 @@ public interface Phone {
      */
 
     void unregisterForNewRingingConnection(Handler h);
-
-    /**
-     * Notifies when phone's video capabilities changes <p>
-     *
-     *  Messages received from this:
-     *  Message.obj will be an AsyncResult
-     *  AsyncResult.userObj = obj
-     *  AsyncResult.result = true if phone supports video calling <p>
-     */
-    public void registerForVideoCapabilityChanged(Handler h, int what, Object obj);
-
-    /**
-     * Unregisters for video capability changed notification.
-     * Extraneous calls are tolerated silently
-     */
-    public void unregisterForVideoCapabilityChanged(Handler h);
 
     /**
      * Notifies when an incoming call rings.<p>
@@ -700,14 +684,6 @@ public interface Phone {
     void acceptCall(int videoState) throws CallStateException;
 
     /**
-     * Deflects a ringing or waiting IMS call.
-     *
-     * @param number The number to deflect to.
-     * @exception CallStateException when no IMS call is ringing or waiting
-     */
-    void deflectCall(String number) throws CallStateException;
-
-    /**
      * Reject (ignore) a ringing call. In GSM, this means UDUB
      * (User Determined User Busy). Reject occurs asynchronously,
      * and final notification occurs via
@@ -857,25 +833,6 @@ public interface Phone {
     Connection dial(String dialString, int videoState) throws CallStateException;
 
     /**
-     * Initiate a new voice connection. This happens asynchronously, so you
-     * cannot assume the audio path is connected (or a call index has been
-     * assigned) until PhoneStateChanged notification has occurred.
-     *
-     * @param dialString The dial string.
-     * @param videoState The desired video state for the connection.
-     * @param extras Additional (meta) call information.
-     *        OEMs can pass call extras (additional call info) Bundle
-     *        in the following format:
-     *        1) All values in the Bundle must be of type String
-     *        2) Keys for the values are defined in ImsCallProfile.java
-     * @exception CallStateException if a new outgoing call is not currently
-     *                possible because no more call slots exist or a call exists
-     *                that is dialing, alerting, ringing, or waiting. Other
-     *                errors are handled asynchronously.
-     */
-    Connection dial(String dialString, int videoState, Bundle extras) throws CallStateException;
-
-    /**
      * Initiate a new voice connection with supplementary User to User
      * Information. This happens asynchronously, so you cannot assume the audio
      * path is connected (or a call index has been assigned) until
@@ -890,19 +847,6 @@ public interface Phone {
      *                errors are handled asynchronously.
      */
     Connection dial(String dialString, UUSInfo uusInfo, int videoState) throws CallStateException;
-
-    /**
-     * Initiate to add a participant in an IMS call.
-     * This happens asynchronously, so you cannot assume the audio path is
-     * connected (or a call index has been assigned) until PhoneStateChanged
-     * notification has occurred.
-     *
-     * @exception CallStateException if a new outgoing call is not currently
-     *                possible because no more call slots exist or a call exists
-     *                that is dialing, alerting, ringing, or waiting. Other
-     *                errors are handled asynchronously.
-     */
-    public void addParticipant(String dialString) throws CallStateException;
 
     /**
      * Handles PIN MMI commands (PIN/PIN2/PUK/PUK2), which are initiated
@@ -1071,20 +1015,6 @@ public interface Phone {
                                   Message onComplete);
 
     /**
-     * getCallForwardingUncondTimerOptions
-     * gets a call forwarding option. The return value of
-     * ((AsyncResult)onComplete.obj) is an array of CallForwardInfo.
-     *
-     * @param commandInterfaceCFReason is one of the valid call forwarding
-     *        CF_REASONS, as defined in
-     *        <code>com.android.internal.telephony.CommandsInterface.</code>
-     * @param onComplete a callback message when the action is completed.
-     *        @see com.android.internal.telephony.CallForwardInfo for details.
-     */
-    void getCallForwardingUncondTimerOption(int commandInterfaceCFReason,
-                                  Message onComplete);
-
-    /**
      * setCallForwardingOptions
      * sets a call forwarding option.
      *
@@ -1103,30 +1033,6 @@ public interface Phone {
                                  int commandInterfaceCFAction,
                                  String dialingNumber,
                                  int timerSeconds,
-                                 Message onComplete);
-
-    /**
-     * setCallForwardingUncondTimerOptions
-     * sets a call forwarding unconditional Timer option.
-     *
-     * @param startHour indicates starting hour
-     * @param startMinute indicates starting minute
-     * @param endHour indicates ending hour
-     * @param endMinute indicates ending minute
-     * @param commandInterfaceCFReason is one of the valid call forwarding
-     *        CF_REASONS, as defined in
-     *        <code>com.android.internal.telephony.CommandsInterface.</code>
-     * @param commandInterfaceCFAction is one of the valid call forwarding
-     *        CF_ACTIONS, as defined in
-     *        <code>com.android.internal.telephony.CommandsInterface.</code>
-     * @param dialingNumber is the target phone number to forward calls to
-     * @param onComplete a callback message when the action is completed.
-     */
-    void setCallForwardingUncondTimerOption(int startHour, int startMinute,
-                                 int endHour, int endMinute,
-                                 int commandInterfaceCFReason,
-                                 int commandInterfaceCFAction,
-                                 String dialingNumber,
                                  Message onComplete);
 
     /**
@@ -1205,15 +1111,6 @@ public interface Phone {
      */
     void selectNetworkManually(OperatorInfo network,
                             Message response);
-
-    /**
-     * Query the radio for the current network selection mode.
-     *
-     * Return values:
-     *     0 - automatic.
-     *     1 - manual.
-     */
-    void getNetworkSelectionMode(Message response);
 
     /**
      *  Requests to set the preferred network type for searching and registering
@@ -1464,11 +1361,6 @@ public interface Phone {
     boolean isDataConnectivityPossible();
 
     /**
-     * Report on whether on-demand data connectivity is allowed.
-     */
-    boolean isOnDemandDataPossible(String apnType);
-
-    /**
      * Report on whether data connectivity is allowed for an APN.
      */
     boolean isDataConnectivityPossible(String apnType);
@@ -1541,11 +1433,6 @@ public interface Phone {
     String getImei();
 
     /**
-     * Retrieves Nai for phones. Returns null if Nai is not set.
-     */
-    String getNai();
-
-    /**
      * Retrieves the PhoneSubInfo of the Phone
      */
     public PhoneSubInfo getPhoneSubInfo();
@@ -1566,18 +1453,6 @@ public interface Phone {
      * @param onComplete a callback message when the action is completed
      */
     void setTTYMode(int ttyMode, Message onComplete);
-
-   /**
-     * setUiTTYMode
-     * sets a TTY mode option.
-     * @param ttyMode is a one of the following:
-     * - {@link com.android.internal.telephony.Phone#TTY_MODE_OFF}
-     * - {@link com.android.internal.telephony.Phone#TTY_MODE_FULL}
-     * - {@link com.android.internal.telephony.Phone#TTY_MODE_HCO}
-     * - {@link com.android.internal.telephony.Phone#TTY_MODE_VCO}
-     * @param onComplete a callback message when the action is completed
-     */
-    void setUiTTYMode(int uiTtyMode, Message onComplete);
 
     /**
      * queryTTYMode
@@ -1614,6 +1489,58 @@ public interface Phone {
      *            Callback message is empty on completion
      */
     public void setCellBroadcastSmsConfig(int[] configValuesArray, Message response);
+
+    /* M: SS part */
+    /**
+     * getFacilityLock
+     * gets Call Barring States. The return value of
+     * (AsyncResult)response.obj).result will be an Integer representing
+     * the sum of enabled serivice classes (sum of SERVICE_CLASS_*)
+     *
+     * @param facility one of CB_FACILTY_*
+     * @param password password or "" if not required
+     * @param onComplete a callback message when the action is completed.
+     * @internal
+     */
+    void getFacilityLock(String facility, String password, Message onComplete);
+
+    /**
+     * setFacilityLock
+     * sets Call Barring options.
+     *
+     * @param facility one of CB_FACILTY_*
+     * @param enable true means lock, false means unlock
+     * @param password password or "" if not required
+     * @param onComplete a callback message when the action is completed.
+     * @internal
+     */
+    void setFacilityLock(String facility, boolean enable, String password, Message onComplete);
+
+    /**
+     * changeBarringPassword
+     * changes Call Barring related password.
+     *
+     * @param facility one of CB_FACILTY_*
+     * @param oldPwd old password
+     * @param newPwd new password
+     * @param onComplete a callback message when the action is completed.
+     */
+    void changeBarringPassword(String facility, String oldPwd,
+        String newPwd, Message onComplete);
+
+    /**
+     * changeBarringPassword
+     * changes Call Barring related password.
+     *
+     * @param facility one of CB_FACILTY_*
+     * @param oldPwd old password
+     * @param newPwd new password
+     * @param newCfm
+     * @param onComplete a callback message when the action is completed.
+     */
+    void changeBarringPassword(String facility, String oldPwd,
+        String newPwd, String newCfm, Message onComplete);
+    /* M: SS part  end */
 
     public void notifyDataActivity();
 
@@ -1817,6 +1744,7 @@ public interface Phone {
      * @param h Handler that receives the notification message.
      * @param what User-defined message code.
      * @param obj User object.
+     * @internal
      */
     public void registerForRadioOffOrNotAvailable(Handler h, int what, Object obj);
 
@@ -1824,6 +1752,7 @@ public interface Phone {
      * Unregisters for radio off or not available
      *
      * @param h Handler to be removed from the registrant list.
+     * @internal
      */
     public void unregisterForRadioOffOrNotAvailable(Handler h);
 
@@ -1872,12 +1801,6 @@ public interface Phone {
      */
     boolean isCspPlmnEnabled();
 
-    /* Checks if manual network selection is allowed
-     * @return true if manual network selection is allowed
-     * @return false if manual network selection is not allowed
-     */
-    public boolean isManualNetSelAllowed();
-
     /**
      * Return an interface to retrieve the ISIM records for IMS, if available.
      * @return the interface to retrieve the ISIM records, or null if not supported
@@ -1915,13 +1838,6 @@ public interface Phone {
      * Remove references to external object stored in this object.
      */
     void removeReferences();
-
-    void getCallBarringOption(String facility, String password, Message onComplete);
-
-    void setCallBarringOption(String facility, boolean lockState, String password,
-            Message onComplete);
-
-    void requestChangeCbPsw(String facility, String oldPwd, String newPwd, Message result);
 
     /**
      * Update the phone object if the voice radio technology has changed
@@ -2020,13 +1936,6 @@ public interface Phone {
     public boolean setOperatorBrandOverride(String brand);
 
     /**
-     * Override the roaming indicator for the current ICCID.
-     */
-    public boolean setRoamingOverride(List<String> gsmRoamingList,
-            List<String> gsmNonRoamingList, List<String> cdmaRoamingList,
-            List<String> cdmaNonRoamingList);
-
-    /**
      * Is Radio Present on the device and is it accessible
      */
     public boolean isRadioAvailable();
@@ -2036,17 +1945,386 @@ public interface Phone {
      */
     public void shutdownRadio();
 
-    /** Request to update the current local call hold state.
-     * @param lchStatus, true if call is in lch state
+    /**
+     *  Set phone RAT family.
+     *
+     *  @param ratFamily bit mask to identify PhoneRatFamily.PHONE_RAT_FAMILY_2G,
+     *         PhoneRatFamily.PHONE_RAT_FAMILY_3G, PhoneRatFamily.PHONE_RAT_FAMILY_4G
+     *  @param response Callback message.
      */
-    public void setLocalCallHold(int lchStatus);
-
-    public boolean isImsVtCallPresent();
+    public void setPhoneRatFamily(int ratFamily, Message response);
 
     /**
-     * Query the IMS Registration Status.
+     *  Get phone RAT family.
      *
-     * @return true if IMS is Registered
+     *  @return a bit mask to identify PhoneRatFamily.PHONE_RAT_FAMILY_2G,
+     *          PhoneRatFamily.PHONE_RAT_FAMILY_3G, PhoneRatFamily.PHONE_RAT_FAMILY_4G
      */
-    public boolean isImsRegistered();
+    public int getPhoneRatFamily();
+
+    /**
+     * Registers the handler when phone RAT family is changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for notifications when phone RAT family is changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForPhoneRatFamilyChanged(Handler h);
+
+    /* M: call control part start */
+    /**
+     * Register for Supplementary Service CRSS notifications from the network.
+     * Message.obj will contain an AsyncResult.
+     * AsyncResult.result will be a SuppCrssNotification instance.
+     *
+     * @param h Handler that receives the notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     * @internal
+     */
+    public void registerForCrssSuppServiceNotification(Handler h, int what, Object obj);
+
+    /**
+     * Unregisters for Supplementary Service CRSS notifications.
+     * Extraneous calls are tolerated silently
+     *
+     * @param h Handler to be removed from the registrant list.
+     * @internal
+     */
+    public void unregisterForCrssSuppServiceNotification(Handler h);
+
+    /**
+     * Register for notifications of EAIC URC.
+     * Message.obj will contain an AsyncResult.
+     *
+     * @param h Handler that receives the notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     * @internal
+     */
+    public void registerForVoiceCallIncomingIndication(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for notifications of EAIC URC
+     * @param h Handler to be removed from the registrant list.
+     * @internal
+     */
+    public void unregisterForVoiceCallIncomingIndication(Handler h);
+
+    public void registerForCipherIndication(Handler h, int what, Object obj);
+    public void unregisterForCipherIndication(Handler h);
+
+    /**
+     * Register for notifications for speech codec info.
+     * Message.obj will contain an AsyncResult.
+     *
+     * @param h Handler that receives the notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    void registerForSpeechCodecInfo(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for notifications for speech codec info
+     * @param h Handler to be removed from the registrant list.
+     */
+    void unregisterForSpeechCodecInfo(Handler h);
+
+    /**
+     * used to release all connections in the MS,
+     * release all connections with one reqeust together, not seperated.
+     * @internal
+     */
+    void hangupAll() throws CallStateException;
+
+    /* M: call control part end */
+
+    // Added by M begin
+
+    // ALPS00302702 RAT balancing
+    int getEfRatBalancing();
+
+    // MVNO-API START
+    String getMvnoMatchType();
+    String getMvnoPattern(String type);
+    // MVNO-API END
+
+    /**
+     *send BT SAP profile
+     *
+     * @param nAction 0: requestConnectSIM,
+     *                1: requestDisconnectOrPowerOffSIM
+     *                2: requestPowerOnOrResetSIM
+     *                3: requestDisconnectOrPowerOffSIM
+     *                4: requestPowerOnOrResetSIM
+     *                5: requestTransferApdu
+     * @param nType only used when nAction is 2, 3, 4, 5
+     * @param strData only used when nAction is 5
+     * @param response a callback message when the action is completed.
+     *
+     * @internal
+     */
+    void sendBtSimProfile(int nAction, int nType, String strData, Message response);
+
+    //MTK-START [mtk04070][111117][ALPS00093395]MTK added
+    enum IccServiceStatus {
+        NOT_EXIST_IN_SIM,
+        NOT_EXIST_IN_USIM,
+        ACTIVATED,
+        INACTIVATED,
+        UNKNOWN;
+    }
+
+    enum IccService {
+        CHV1_DISABLE_FUNCTION,      //(0)CHV1 disable function (SIM only)
+        SPN,                        //(1)Service Provider Name
+        PNN,                        //(2)PLMN Network Name
+        OPL,                        //(3)Operator PLMN List
+        MWIS,                       //(4)Message Waiting Indication Status
+        CFIS,                       //(5)Call Forwarding Indication Status
+        SPDI,                       //(6)Service Provider Display Information
+        EPLMN,                      //(7)Equivalent HPLMN (USIM only)
+        SMSP,                       //(8)[ALPS01206315]Short Message Service Parameters
+        UNSUPPORTED_SERVICE;        //(9)
+
+        public int getIndex() {
+            int nIndex = -1;
+        switch(this) {
+        case CHV1_DISABLE_FUNCTION:
+            nIndex = 0;
+            break;
+        case SPN:
+            nIndex = 1;
+            break;
+        case PNN:
+            nIndex = 2;
+            break;
+        case OPL:
+            nIndex = 3;
+            break;
+        case MWIS:
+            nIndex = 4;
+            break;
+        case CFIS:
+            nIndex = 5;
+            break;
+        case SPDI:
+            nIndex = 6;
+            break;
+        case EPLMN:
+            nIndex = 7;
+            break;
+        case SMSP:
+            nIndex = 8;
+            break;
+        case UNSUPPORTED_SERVICE:
+            nIndex = 9;
+            break;
+        default:
+            break;
+        }
+            return nIndex;
+        }
+    }
+    //MTK-END [mtk04070][111117][ALPS00093395]MTK added
+
+    /**
+     * Request 3G/4G context authentication, including AKA and GBA.
+     */
+    void doGeneralSimAuthentication(int sessionId, int mode, int tag,
+            String param1, String param2, Message result);
+
+    /**
+     * Request the information of the given storage type
+     *
+     * @param type
+     *          the type of the storage, refer to PHB_XDN defined in the RilConstants
+     * @param response
+     *          Callback message
+     *          response.obj.result is an int[4]
+     *          response.obj.result[0] is number of current used entries
+     *          response.obj.result[1] is number of total entries in the storage
+     *          response.obj.result[2] is maximum supported length of the number
+     *          response.obj.result[3] is maximum supported length of the alphaId
+     */
+    void queryPhbStorageInfo(int type, Message response);
+    // Added by M end
+
+// M: network part START
+    /**
+     * Cancel scan available networks. This method is asynchronous; .
+     */
+    void cancelAvailableNetworks(Message response);
+
+
+    void setNetworkSelectionModeSemiAutomatic(OperatorInfo network, Message response);
+
+    /**
+     * Register for Neighboring cell info changed.
+     * Message.obj will contain an AsyncResult.
+     * AsyncResult.result will be a String[ ] instance
+     */
+    void registerForNeighboringInfo(Handler h, int what, Object obj);
+
+    /**
+     * Unregisters for Neighboring cell info changed notification.
+     * Extraneous calls are tolerated silently
+     */
+    void unregisterForNeighboringInfo(Handler h);
+
+    /**
+     * Register for Network info changed.
+     * Message.obj will contain an AsyncResult.
+     * AsyncResult.result will be a String[ ] instance
+     */
+    void registerForNetworkInfo(Handler h, int what, Object obj);
+
+    /**
+     * Unregisters for Network info changed notification.
+     * Extraneous calls are tolerated silently
+     */
+    void unregisterForNetworkInfo(Handler h);
+
+    /**
+     * Refresh Spn Display due to configuration change
+     @internal
+     */
+    void refreshSpnDisplay();
+
+  /** Get Network hided state
+     * @internal
+     */
+    int getNetworkHideState();
+
+  /**
+     * Returns current located PLMN string(ex: "46000") or null if not availble (ex: in flight mode or no signal area)
+     * @internal
+     */
+    String getLocatedPlmn();
+
+ // Femtocell (CSG) feature START
+ /**
+     * Scan available femtocells. This method is asynchronous; .
+     * On completion, <code>response.obj</code> is set to an AsyncResult with
+     * one of the following members:.<p>
+     *<ul>
+     * <li><code>response.obj.result</code> will be a <code>List</code> of
+     * <code>FemtoCellInfo</code> objects, or</li>
+     * <li><code>response.obj.exception</code> will be set with an exception
+     * on failure.</li>
+     * </ul>
+     * @internal
+     */
+    void getFemtoCellList(String operatorNumeric, int rat, Message response);
+
+
+ /**
+     * Abort scaning femtocell list. <code>response</code> is
+     * dispatched when this is complete.  <code>response.obj</code> will be
+     * an AsyncResult, and <code>response.obj.exception</code> will be non-null
+     * on failure.
+     * @param response is callback message
+     * @internal
+     */
+    void abortFemtoCellList(Message response);
+
+ /**
+     * Manually selects a femtocell. <code>response</code> is
+     * dispatched when this is complete.  <code>response.obj</code> will be
+     * an AsyncResult, and <code>response.obj.exception</code> will be non-null
+     * on failure.
+     * @param femtocell is the specified femtocell to be selected
+     * @param response is callback message
+     * @internal
+     */
+    void selectFemtoCell(FemtoCellInfo femtocell, Message response);
+    // Femtocell (CSG) feature END
+
+    /** Get POL capability.
+     *
+     * @param onComplete a callback message when the action is completed.
+     *
+     * @internal
+     */
+    void getPolCapability(Message onComplete);
+
+    /** Get Prefered operator list.
+     *
+     * @param onComplete a callback message when the action is completed.
+     *
+     * @internal
+     */
+    void getPol(Message onComplete);
+
+    /** Set POL entry.
+     *
+     * @param networkWithAct network infor with act.
+     * @param onComplete a callback message when the action is completed.
+     *
+     * @internal
+     */
+    void setPolEntry(NetworkInfoWithAcT networkWithAct, Message onComplete);
+
+  /** Get IMS registeration state info
+     */
+    public boolean getImsRegInfo();
+
+  /** Get IMS registeration state extended info
+     */
+    public String getImsExtInfo();
+
+    // VOLTE
+    int enableDedicateBearer(String apnType, boolean signalingFlag, QosStatus qosStatus, TftStatus tftStatus);
+    int disableDedicateBearer(String reason, int cid);
+    int modifyDedicateBearer(int cid, QosStatus qosStatus, TftStatus tftStatus);
+    int abortEnableDedicateBearer(String reason, int ddcId);
+    int pcscfDiscovery(String apnType, int cid, Message onComplete);
+    PcscfInfo getPcoPcscf(String apnType);
+
+    DedicateBearerProperties getDefaultBearerProperties(String apnType);
+    DedicateBearerProperties [] getConcatenatedBearersPropertiesOfDefaultBearer(String apnType);
+    int setDefaultBearerConfig(String apnType, DefaultBearerConfig defaultBearerConfig);
+    int [] getDeactivateCidArray(String apnType);
+    boolean isEmergencyCid(int cid);
+    DcFailCause getLastDataConnectionFailCause(String apnType);
+    boolean isDedicateBearer(int cid);
+    void clearDataBearer();
+
+//M: network part END
+
+    /// M: IMS feature. @{
+    /**
+     * Register for notify IMS conference call indication.
+     * Message.obj will contain an AsyncResult.
+     */
+    public void registerForImsConferenceCallNotification(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for IMS conference call indication.
+     */
+    public void unregisterForImsConferenceCallNotification(Handler h);
+
+    /**
+     * Register for notify call info(call mode and pau) indication.
+     * Message.obj will contain an AsyncResult.
+     */
+    public void registerForCallInfoChangedNotification(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for call info indication.
+     */
+    public void unregisterForCallInfoChangedNotification(Handler h);
+
+    /**
+     * Add new participant to IMS conference call.
+     */
+    public void addConferenceMember(int confCallId, String address, int callIdToAdd) throws CallStateException;
+    /// @}
 }

@@ -90,7 +90,7 @@ public class DcRetryAlarmController {
     }
 
     /**
-     * Dispose of resources when shutting down
+     * Dispose of resources when shutting down.
      */
     void dispose() {
         if (DBG) log("dispose");
@@ -146,9 +146,26 @@ public class DcRetryAlarmController {
                     " what=" + what + " tag=" + tag);
         }
 
-        PendingIntent retryIntent = PendingIntent.getBroadcast (mPhone.getContext(), 0,
+        PendingIntent retryIntent = PendingIntent.getBroadcast(mPhone.getContext(), 0,
                                         intent, PendingIntent.FLAG_UPDATE_CURRENT);
         mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + delay, retryIntent);
+    }
+
+    public void startRetryAlarmExact(int what, int tag, int delay) {
+        Intent intent = new Intent(mActionRetry);
+        intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+        intent.putExtra(INTENT_RETRY_ALARM_WHAT, what);
+        intent.putExtra(INTENT_RETRY_ALARM_TAG, tag);
+
+        if (DBG) {
+            log("startRetryAlarmExact: next attempt in " + (delay / 1000) + "s" +
+                    " what=" + what + " tag=" + tag);
+        }
+
+        PendingIntent retryIntent = PendingIntent.getBroadcast(mPhone.getContext(), 0,
+                                        intent, PendingIntent.FLAG_UPDATE_CURRENT);
+        mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                 SystemClock.elapsedRealtime() + delay, retryIntent);
     }
 

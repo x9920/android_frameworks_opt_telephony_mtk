@@ -22,7 +22,6 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
-import android.net.Uri;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.Process;
@@ -64,7 +63,10 @@ import java.util.regex.Pattern;
  */
 public class SmsUsageMonitor {
     private static final String TAG = "SmsUsageMonitor";
-    private static final boolean DBG = true; // intentionally enable DBG
+    /* MTK-START */
+    /* Turn on debug information to speed up the issue analysis on short code sms issue */
+    private static final boolean DBG = true;
+    /* MTK-END */
     private static final boolean VDBG = false;
 
     private static final String SHORT_CODE_PATH = "/data/misc/sms/codes";
@@ -108,11 +110,15 @@ public class SmsUsageMonitor {
     /** Premium SMS permission when the owner has allowed the app to send premium SMS. */
     public static final int PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW = 3;
 
-    private int mCheckPeriod;
-    private int mMaxAllowed;
+    private final int mCheckPeriod;
+    private final int mMaxAllowed;
 
     private final HashMap<String, ArrayList<Long>> mSmsStamp =
             new HashMap<String, ArrayList<Long>>();
+
+    // MTK-START
+    private static final String PACKAGE_NAME_MMS = "com.android.mms";
+    // MTK-END
 
     /** Context for retrieving regexes from XML resource. */
     private final Context mContext;
@@ -128,9 +134,6 @@ public class SmsUsageMonitor {
 
     /** Handler for responding to content observer updates. */
     private final SettingsObserverHandler mSettingsObserverHandler;
-
-    /** Handler for responding to content observer updates sms limits. */
-    private final SmsLimitObserverHandler mSmsLimitObserverHandler;
 
     /** File holding the patterns */
     private final File mPatternFile = new File(SHORT_CODE_PATH);
@@ -254,56 +257,20 @@ public class SmsUsageMonitor {
     }
 
     /**
-     * Observe the global setting for sms limits
-     */
-    private class SmsLimitObserver extends ContentObserver {
-        private final Context mContext;
-
-        SmsLimitObserver(Handler handler, Context context) {
-            super(handler);
-            mContext = context;
-            onChange(false);
-        }
-
-        @Override
-        public void onChange(boolean selfChange) {
-            onChange(selfChange, null);
-        }
-
-        @Override
-        public void onChange(boolean selfChange, Uri uri) {
-            ContentResolver resolver = mContext.getContentResolver();
-            mMaxAllowed = Settings.Global.getInt(resolver,
-                    Settings.Global.SMS_OUTGOING_CHECK_MAX_COUNT,
-                    DEFAULT_SMS_MAX_COUNT);
-
-            mCheckPeriod = Settings.Global.getInt(resolver,
-                    Settings.Global.SMS_OUTGOING_CHECK_INTERVAL_MS,
-                    DEFAULT_SMS_CHECK_PERIOD);
-        }
-    }
-
-    private class SmsLimitObserverHandler extends Handler {
-        SmsLimitObserverHandler(Context context) {
-            ContentResolver resolver = context.getContentResolver();
-
-            ContentObserver globalObserver = new SmsLimitObserver(this, context);
-
-            resolver.registerContentObserver(Settings.Global.getUriFor(
-                    Settings.Global.SMS_OUTGOING_CHECK_MAX_COUNT), false, globalObserver);
-            resolver.registerContentObserver(Settings.Global.getUriFor(
-                    Settings.Global.SMS_OUTGOING_CHECK_INTERVAL_MS), false, globalObserver);
-        }
-    }
-
-    /**
      * Create SMS usage monitor.
      * @param context the context to use to load resources and get TelephonyManager service
      */
     public SmsUsageMonitor(Context context) {
         mContext = context;
+        ContentResolver resolver = context.getContentResolver();
 
-        mSmsLimitObserverHandler = new SmsLimitObserverHandler(mContext);
+        mMaxAllowed = Settings.Global.getInt(resolver,
+                Settings.Global.SMS_OUTGOING_CHECK_MAX_COUNT,
+                DEFAULT_SMS_MAX_COUNT);
+
+        mCheckPeriod = Settings.Global.getInt(resolver,
+                Settings.Global.SMS_OUTGOING_CHECK_INTERVAL_MS,
+                DEFAULT_SMS_CHECK_PERIOD);
 
         mSettingsObserverHandler = new SettingsObserverHandler(mContext, mCheckEnabled);
 
@@ -401,6 +368,12 @@ public class SmsUsageMonitor {
      *  of new sms messages
      */
     public boolean check(String appName, int smsWaiting) {
+        // MTK-START
+        if (appName.equals(PACKAGE_NAME_MMS)) {
+            return true;
+        }
+        // MTK-END
+
         synchronized (mSmsStamp) {
             removeExpiredTimestamps();
 
@@ -444,14 +417,10 @@ public class SmsUsageMonitor {
             if (countryIso != null) {
                 if (mCurrentCountry == null || !countryIso.equals(mCurrentCountry) ||
                         mPatternFile.lastModified() != mPatternFileLastModified) {
-                    mCurrentPatternMatcher = null;
                     if (mPatternFile.exists()) {
                         if (DBG) Rlog.d(TAG, "Loading SMS Short Code patterns from file");
                         mCurrentPatternMatcher = getPatternMatcherFromFile(countryIso);
-                    }
-
-                    // if matcher not defined in file, fall back to xml
-                    if (mCurrentPatternMatcher == null) {
+                    } else {
                         if (DBG) Rlog.d(TAG, "Loading SMS Short Code patterns from resource");
                         mCurrentPatternMatcher = getPatternMatcherFromResource(countryIso);
                     }

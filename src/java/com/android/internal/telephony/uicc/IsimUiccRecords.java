@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2015, Linux Foundation. All rights reserved.
- * Not a Contribution.
- *
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +20,13 @@ import android.content.Context;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
+import android.os.Registrant;
 import android.telephony.Rlog;
 import android.content.Intent;
 
 
 import com.android.internal.telephony.CommandsInterface;
+import com.android.internal.telephony.IccUtils;
 import com.android.internal.telephony.gsm.SimTlv;
 //import com.android.internal.telephony.gsm.VoiceMailConstants;
 
@@ -43,6 +42,8 @@ import static com.android.internal.telephony.uicc.IccConstants.EF_IMPU;
 import static com.android.internal.telephony.uicc.IccConstants.EF_IST;
 import static com.android.internal.telephony.uicc.IccConstants.EF_PCSCF;
 
+import com.mediatek.internal.telephony.uicc.IsimServiceTable;
+
 /**
  * {@hide}
  */
@@ -54,7 +55,22 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
     public static final String INTENT_ISIM_REFRESH = "com.android.intent.isim_refresh";
 
     private static final int EVENT_APP_READY = 1;
+    private static final int EVENT_ISIM_REFRESH = 31;
     private static final int EVENT_AKA_AUTHENTICATE_DONE          = 90;
+
+    //MTK-START
+    private static final int EVENT_GET_GBABP_DONE = 200;
+    private static final int EVENT_GET_GBANL_DONE = 201;
+    private static final int EVENT_GET_PSISMSC_DONE = 202;
+
+    protected UiccController mUiccController;
+    IsimServiceTable mIsimServiceTable;
+
+    private int mSlotId;
+    private int mIsimChannel;
+
+    byte[] mEfPsismsc = null;
+    //MTK-END
 
     // ISIM EF records (see 3GPP TS 31.103)
     private String mIsimImpi;               // IMS private user identity
@@ -63,6 +79,12 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
     private String mIsimIst;             // IMS Service Table
     private String[] mIsimPcscf;             // IMS Proxy Call Session Control Function
     private String auth_rsp;
+
+    //MTK-START
+    private String mIsimGbabp;
+    private String[] mIsimGbanl;
+    ArrayList<byte[]> mEfGbanlList;
+    //MTK-END
 
     private final Object mLock = new Object();
 
@@ -81,23 +103,25 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
     public IsimUiccRecords(UiccCardApplication app, Context c, CommandsInterface ci) {
         super(app, c, ci);
 
-        mAdnCache = new AdnRecordCache(mFh);
-
         mRecordsRequested = false;  // No load request is made till SIM ready
 
         // recordsToLoad is set to 0 because no requests are made yet
         mRecordsToLoad = 0;
         // Start off by setting empty state
         resetRecords();
+        mCi.registerForIccRefresh(this, EVENT_ISIM_REFRESH, null);
 
         mParentApp.registerForReady(this, EVENT_APP_READY, null);
         if (DBG) log("IsimUiccRecords X ctor this=" + this);
+        mSlotId = app.getSlotId();
+        mUiccController = UiccController.getInstance();
     }
 
     @Override
     public void dispose() {
         log("Disposing " + this);
         //Unregister for all events
+        mCi.unregisterForIccRefresh(this);
         mParentApp.unregisterForReady(this);
         resetRecords();
         super.dispose();
@@ -106,7 +130,8 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
     // ***** Overridden from Handler
     public void handleMessage(Message msg) {
         AsyncResult ar;
-
+        byte data[];
+        boolean isRecordLoadResponse = false;
         if (mDestroyed.get()) {
             Rlog.e(LOG_TAG, "Received message " + msg +
                     "[" + msg.what + "] while being destroyed. Ignoring.");
@@ -120,11 +145,23 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
                     onReady();
                     break;
 
+                case EVENT_ISIM_REFRESH:
+                    ar = (AsyncResult)msg.obj;
+                    loge("ISim REFRESH(EVENT_ISIM_REFRESH) with exception: " + ar.exception);
+                    if (ar.exception == null) {
+                        Intent intent = new Intent(INTENT_ISIM_REFRESH);
+                        loge("send ISim REFRESH: " + INTENT_ISIM_REFRESH);
+                        mContext.sendBroadcast(intent);
+                        handleIsimRefresh((IccRefreshResponse)ar.result);
+                    }
+                    break;
+
                 case EVENT_AKA_AUTHENTICATE_DONE:
                     ar = (AsyncResult)msg.obj;
                     log("EVENT_AKA_AUTHENTICATE_DONE");
                     if (ar.exception != null) {
                         log("Exception ISIM AKA: " + ar.exception);
+                        break;
                     } else {
                         try {
                             auth_rsp = (String)ar.result;
@@ -139,6 +176,44 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
 
                     break;
 
+                case EVENT_GET_GBABP_DONE:
+                    isRecordLoadResponse = true;
+                    ar = (AsyncResult) msg.obj;
+                    if (ar.exception == null) {
+                       data = ((byte[]) ar.result);
+                       mIsimGbabp = IccUtils.bytesToHexString(data);
+                       if (DUMP_RECORDS) log("EF_ISIM_GBABP=" + mIsimGbabp);
+                    } else {
+                        loge("Error on GET_ISIM_GBABP with exp " + ar.exception);
+                    }
+                    break;
+
+                case EVENT_GET_GBANL_DONE:
+                    isRecordLoadResponse = true;
+                    ar = (AsyncResult) msg.obj;
+                    if (ar.exception == null) {
+                       mEfGbanlList = ((ArrayList<byte[]>) ar.result);
+                        if (DBG) log("GET_ISIM_GBANL record count: " + mEfGbanlList.size());
+                    } else {
+                        loge("Error on GET_ISIM_GBANL with exp " + ar.exception);
+                    }
+                    break;
+                case EVENT_GET_PSISMSC_DONE:
+                    isRecordLoadResponse = true;
+
+                    ar = (AsyncResult) msg.obj;
+                    data = (byte[]) ar.result;
+
+                    if (ar.exception != null) {
+                        break;
+                    }
+
+                    log("EF_PSISMSC: " + IccUtils.bytesToHexString(data));
+
+                    if (data != null) {
+                        mEfPsismsc = data;
+                    }
+                    break;
                 default:
                     super.handleMessage(msg);   // IccRecords handles generic record load responses
 
@@ -146,31 +221,51 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
         } catch (RuntimeException exc) {
             // I don't want these exceptions to be fatal
             Rlog.w(LOG_TAG, "Exception parsing SIM record", exc);
+        } finally {
+            // Count up record load responses even if they are fails
+            if (isRecordLoadResponse) {
+                onRecordLoaded();
+            }
         }
     }
 
     protected void fetchIsimRecords() {
         mRecordsRequested = true;
 
-        mFh.loadEFTransparent(EF_IMPI, obtainMessage(
+        mIsimChannel = mUiccController.getIccApplicationChannel(mSlotId, UiccController.APP_FAM_IMS);
+        log("mIsimChannel = " + mIsimChannel);
+
+        mFh.loadEFTransparentEx(EF_IMPI, mIsimChannel, obtainMessage(
                 IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimImpiLoaded()));
         mRecordsToLoad++;
 
-        mFh.loadEFLinearFixedAll(EF_IMPU, obtainMessage(
+        mFh.loadEFLinearFixedAllEx(EF_IMPU, mIsimChannel, obtainMessage(
                 IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimImpuLoaded()));
         mRecordsToLoad++;
 
-        mFh.loadEFTransparent(EF_DOMAIN, obtainMessage(
+        mFh.loadEFTransparentEx(EF_DOMAIN, mIsimChannel, obtainMessage(
                 IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimDomainLoaded()));
         mRecordsToLoad++;
-        mFh.loadEFTransparent(EF_IST, obtainMessage(
+
+        mFh.loadEFTransparentEx(EF_IST, mIsimChannel, obtainMessage(
                     IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimIstLoaded()));
         mRecordsToLoad++;
-        mFh.loadEFLinearFixedAll(EF_PCSCF, obtainMessage(
-                    IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimPcscfLoaded()));
-        mRecordsToLoad++;
+
+        //mFh.loadEFLinearFixedAll(EF_PCSCF, obtainMessage(
+        //            IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimPcscfLoaded()));
+        //mRecordsToLoad++;
 
         if (DBG) log("fetchIsimRecords " + mRecordsToLoad + " requested: " + mRecordsRequested);
+    }
+
+    private void fetchGbaParam() {
+        if (mIsimServiceTable.isAvailable(IsimServiceTable.IsimService.GBA)) {
+            mFh.loadEFTransparentEx(EF_ISIM_GBABP, mIsimChannel, obtainMessage(EVENT_GET_GBABP_DONE));
+            mRecordsToLoad++;
+
+            mFh.loadEFLinearFixedAllEx(EF_ISIM_GBANL, mIsimChannel, obtainMessage(EVENT_GET_GBANL_DONE));
+            mRecordsToLoad++;
+        }
     }
 
     protected void resetRecords() {
@@ -234,8 +329,30 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
             byte[] data = (byte[]) ar.result;
             mIsimIst = IccUtils.bytesToHexString(data);
             if (DUMP_RECORDS) log("EF_IST=" + mIsimIst);
+
+
+            mIsimServiceTable = new IsimServiceTable(data);
+            if (DBG) log("IST: " + mIsimServiceTable);
+
+            mIsimChannel = mUiccController.getIccApplicationChannel(mSlotId, UiccController.APP_FAM_IMS);
+            log("mIsimChannel = " + mIsimChannel);
+
+            if (mIsimServiceTable.isAvailable(IsimServiceTable.IsimService.PCSCF_ADDRESS)
+                    || mIsimServiceTable.isAvailable(IsimServiceTable.IsimService.PCSCF_DISCOVERY)) {
+                mFh.loadEFLinearFixedAllEx(EF_PCSCF, mIsimChannel, obtainMessage(
+                        IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimPcscfLoaded()));
+                mRecordsToLoad++;
+            }
+
+            if (mIsimServiceTable.isAvailable(IsimServiceTable.IsimService.SM_OVER_IP)) {
+                mFh.loadEFLinearFixedEx(EF_PSISMSC, 1, mIsimChannel, obtainMessage(EVENT_GET_PSISMSC_DONE));
+                mRecordsToLoad++;
+            }
+
+            fetchGbaParam();
         }
     }
+
     private class EfIsimPcscfLoaded implements IccRecords.IccRecordLoaded {
         public String getEfName() {
             return "EF_ISIM_PCSCF";
@@ -247,8 +364,10 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
             int i = 0;
             for (byte[] identity : pcscflist) {
                 String pcscf = isimTlvToString(identity);
-                if (DUMP_RECORDS) log("EF_PCSCF[" + i + "]=" + pcscf);
-                mIsimPcscf[i++] = pcscf;
+                // FIXME: address type should not be encoded?
+                mIsimPcscf[i] = ((pcscf != null) ? pcscf.substring(1, pcscf.length()) : "");
+                if (DUMP_RECORDS) log("EF_PCSCF[" + i + "]=" + mIsimPcscf[i]);
+                i++;
             }
         }
     }
@@ -289,43 +408,38 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
     @Override
     protected void onAllRecordsLoaded() {
        if (DBG) log("record load complete");
-       if (isAppStateReady()) {
-            mRecordsLoadedRegistrants.notifyRegistrants(
-                    new AsyncResult(null, null, null));
-       } else {
-           log("onAllRecordsLoaded: AppState is not ready; not notifying the registrants");
-       }
+        mRecordsLoadedRegistrants.notifyRegistrants(
+                new AsyncResult(null, null, null));
     }
 
-    @Override
-    protected void handleFileUpdate(int efid) {
+    private void handleFileUpdate(int efid) {
         switch (efid) {
             case EF_IMPI:
-                mFh.loadEFTransparent(EF_IMPI, obtainMessage(
+                mFh.loadEFTransparentEx(EF_IMPI, mIsimChannel, obtainMessage(
                             IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimImpiLoaded()));
                 mRecordsToLoad++;
                 break;
 
             case EF_IMPU:
-                mFh.loadEFLinearFixedAll(EF_IMPU, obtainMessage(
+                mFh.loadEFLinearFixedAllEx(EF_IMPU, mIsimChannel, obtainMessage(
                             IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimImpuLoaded()));
                 mRecordsToLoad++;
             break;
 
             case EF_DOMAIN:
-                mFh.loadEFTransparent(EF_DOMAIN, obtainMessage(
+                mFh.loadEFTransparentEx(EF_DOMAIN, mIsimChannel, obtainMessage(
                             IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimDomainLoaded()));
                 mRecordsToLoad++;
             break;
 
             case EF_IST:
-                mFh.loadEFTransparent(EF_IST, obtainMessage(
+                mFh.loadEFTransparentEx(EF_IST, mIsimChannel, obtainMessage(
                             IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimIstLoaded()));
                 mRecordsToLoad++;
             break;
 
             case EF_PCSCF:
-                mFh.loadEFLinearFixedAll(EF_PCSCF, obtainMessage(
+                mFh.loadEFLinearFixedAllEx(EF_PCSCF, mIsimChannel, obtainMessage(
                             IccRecords.EVENT_GET_ICC_RECORD_DONE, new EfIsimPcscfLoaded()));
                 mRecordsToLoad++;
 
@@ -335,11 +449,75 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
         }
     }
 
+    private void handleIsimRefresh(IccRefreshResponse refreshResponse) {
+        if (refreshResponse == null) {
+            if (DBG) log("handleIsimRefresh received without input");
+            return;
+        }
+
+        if (refreshResponse.aid != null &&
+                !refreshResponse.aid.equals(mParentApp.getAid())) {
+            // This is for different app. Ignore.
+            if (DBG) log("handleIsimRefresh received different app");
+            return;
+        }
+
+        switch (refreshResponse.refreshResult) {
+            case IccRefreshResponse.REFRESH_RESULT_FILE_UPDATE:
+                if (DBG) log("handleIsimRefresh with REFRESH_RESULT_FILE_UPDATE");
+                // FIXME: should change to efId as array type
+                //for(int i = 0; i < refreshResponse.efId.length; i++){
+                //    handleFileUpdate(refreshResponse.efId[i]);
+                //}
+                handleFileUpdate(refreshResponse.efId);
+                break;
+
+            case IccRefreshResponse.REFRESH_RESULT_INIT:
+                if (DBG) log("handleIsimRefresh with REFRESH_RESULT_INIT");
+                // need to reload all files (that we care about)
+                // onIccRefreshInit();
+                fetchIsimRecords();
+                break;
+
+            case IccRefreshResponse.REFRESH_RESULT_RESET:
+                if (DBG) log("handleIsimRefresh with REFRESH_RESULT_RESET");
+                // need to reload all files (that we care about)
+                if (requirePowerOffOnSimRefreshReset()) {
+                    mCi.setRadioPower(false, null);
+                    /* Note: no need to call setRadioPower(true).  Assuming the desired
+                    * radio power state is still ON (as tracked by ServiceStateTracker),
+                    * ServiceStateTracker will call setRadioPower when it receives the
+                    * RADIO_STATE_CHANGED notification for the power off.  And if the
+                    * desired power state has changed in the interim, we don't want to
+                    * override it with an unconditional power on.
+                    */
+                }
+                break;
+
+            default:
+                // unknown refresh operation
+                if (DBG) log("handleIsimRefresh with unknown operation");
+                break;
+        }
+    }
+
     @Override
-    protected void broadcastRefresh() {
-        Intent intent = new Intent(INTENT_ISIM_REFRESH);
-        log("send ISim REFRESH: " + INTENT_ISIM_REFRESH);
-        mContext.sendBroadcast(intent);
+    public void registerForRecordsLoaded(Handler h, int what, Object obj) {
+        if (mDestroyed.get()) {
+            return;
+        }
+
+        Registrant r = new Registrant(h, what, obj);
+        mRecordsLoadedRegistrants.add(r);
+
+        if (mRecordsToLoad == 0 && mRecordsRequested == true) {
+            r.notifyRegistrant(new AsyncResult(null, null, null));
+        }
+    }
+
+    @Override
+    public void unregisterForRecordsLoaded(Handler h) {
+        mRecordsLoadedRegistrants.remove(h);
     }
 
     /**
@@ -418,6 +596,39 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
         return auth_rsp;
     }
 
+    public byte[] getEfPsismsc() {
+        log("PSISMSC = " + mEfPsismsc);
+        return mEfPsismsc;
+    }
+
+
+    /**
+     * Returns the GBA bootstrapping parameters (GBABP) that was loaded from the ISIM.
+     * @return GBA bootstrapping parameters or null if not present or not loaded
+     */
+    public String getIsimGbabp() {
+        log("ISIM GBABP = " + mIsimGbabp);
+        return mIsimGbabp;
+    }
+
+    /**
+     * Set the GBA bootstrapping parameters (GBABP) value into the ISIM.
+     * @param gbabp a GBA bootstrapping parameters value in String type
+     * @param onComplete
+     *        onComplete.obj will be an AsyncResult
+     *        ((AsyncResult)onComplete.obj).exception == null on success
+     *        ((AsyncResult)onComplete.obj).exception != null on fail
+     */
+    public void setIsimGbabp(String gbabp, Message onComplete) {
+        byte[] data = IccUtils.hexStringToBytes(gbabp);
+
+        mIsimChannel = mUiccController.getIccApplicationChannel(mSlotId, UiccController.APP_FAM_IMS);
+        log("mIsimChannel = " + mIsimChannel);
+
+        mFh.updateEFTransparentEx(EF_ISIM_GBABP, mIsimChannel, data, onComplete);
+    }
+
+
     @Override
     public int getDisplayRule(String plmn) {
         // Not applicable to Isim
@@ -472,10 +683,4 @@ public final class IsimUiccRecords extends IccRecords implements IsimRecords {
         pw.println(" mIsimPcscf"+mIsimPcscf);
         pw.flush();
     }
-
-    @Override
-    public int getVoiceMessageCount() {
-        return 0; // Not applicable to Isim
-    }
-
 }

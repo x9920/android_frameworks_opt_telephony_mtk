@@ -19,6 +19,10 @@ package com.android.internal.telephony;
 import java.util.ArrayList;
 import java.util.Iterator;
 
+// MTK-START
+import android.telephony.Rlog;
+// MTK-END
+
 /**
  * Clients can enable reception of SMS-CB messages for specific ranges of
  * message identifiers (channels). This class keeps track of the currently
@@ -642,6 +646,17 @@ public abstract class IntRangeManager {
             }
         }
     }
+
+    // MTK-START
+    /**
+     * Clear all the saved ranges
+     * @hide
+     */
+    public void clearAllRanges() {
+        Rlog.d("IntRangeManager", "clear all the ranges");
+        mRanges.clear();
+    }
+    // MTK-END
 
     /**
      * Called when the list of enabled ranges has changed. This will be

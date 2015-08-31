@@ -38,7 +38,13 @@ public final class SmsEnvelope {
     static public final int TELESERVICE_WAP               = 0x1004;
     static public final int TELESERVICE_WEMT              = 0x1005;
     static public final int TELESERVICE_SCPT              = 0x1006;
-    static public final int TELESERVICE_CT_WAP            = 0xFDEA;
+
+    // / via added.
+    static public final int TELESERVICE_WAP_CT = 0xFDEA;
+    static public final int TELESERVICE_REG_SMS_CT = 0xFDED;
+
+    static public final int TELESERVICE_CTC_DM = 0xFDF1;
+    // / via added.
 
     /**
      * The following are defined as extensions to the standard teleservices

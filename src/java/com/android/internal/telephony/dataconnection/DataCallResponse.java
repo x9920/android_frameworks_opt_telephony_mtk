@@ -31,6 +31,12 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
+//VoLTE
+import java.util.ArrayList;
+import com.mediatek.internal.telephony.DedicateDataCallState;
+
+
+
 /**
  * This is RIL_Data_Call_Response_v5 from ril.h
  */
@@ -48,8 +54,13 @@ public class DataCallResponse {
     public String [] dnses = new String[0];
     public String[] gateways = new String[0];
     public int suggestedRetryTime = -1;
-    public String [] pcscf = new String[0];
+
     public int mtu = PhoneConstants.UNSET_MTU;
+    
+    //VoLTE
+    public String[] pcscf = new String[0]; //the P-CSCF
+    public ArrayList<DedicateDataCallState> concatenateDataCallState = new ArrayList<DedicateDataCallState>();
+    public DedicateDataCallState defaultBearerDataCallState = new DedicateDataCallState();
 
     /**
      * Class returned by onSetupConnectionCompleted.
@@ -104,12 +115,15 @@ public class DataCallResponse {
             sb.append(",");
         }
         if (gateways.length > 0) sb.deleteCharAt(sb.length()-1);
+
+        //VoLTE
         sb.append("] pcscf=[");
         for (String addr : pcscf) {
             sb.append(addr);
             sb.append(",");
         }
         if (pcscf.length > 0) sb.deleteCharAt(sb.length()-1);
+
         sb.append("]}");
         return sb.toString();
     }
@@ -143,7 +157,7 @@ public class DataCallResponse {
                         String [] ap = addr.split("/");
                         if (ap.length == 2) {
                             addr = ap[0];
-                            addrPrefixLen = Integer.parseInt(ap[1].replaceAll("[\\D]",""));
+                            addrPrefixLen = Integer.parseInt(ap[1]);
                         } else {
                             addrPrefixLen = 0;
                         }

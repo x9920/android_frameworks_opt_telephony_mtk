@@ -88,7 +88,7 @@ public class CatServiceFactory {
             if (fh == null) return null;
 
             if (sCatServices[slotId] == null) {
-                sCatServices[slotId] = new CatService(ci, context, fh, slotId);
+                sCatServices[slotId] = CatService.getInstance(ci, context, ic, slotId);
             }
         }
         return sCatServices[slotId];

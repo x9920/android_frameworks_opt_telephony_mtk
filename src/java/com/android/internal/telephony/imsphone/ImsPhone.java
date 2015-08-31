@@ -20,7 +20,6 @@ import android.app.ActivityManagerNative;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncResult;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
@@ -29,6 +28,7 @@ import android.os.RegistrantList;
 import android.os.PowerManager.WakeLock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
 import android.telephony.Rlog;
@@ -52,6 +52,7 @@ import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BAICr
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BA_ALL;
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BA_MO;
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BA_MT;
+
 import static com.android.internal.telephony.CommandsInterface.CF_ACTION_DISABLE;
 import static com.android.internal.telephony.CommandsInterface.CF_ACTION_ENABLE;
 import static com.android.internal.telephony.CommandsInterface.CF_ACTION_ERASURE;
@@ -76,11 +77,11 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
+import com.android.internal.telephony.Subscription;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.cdma.CDMAPhone;
 import com.android.internal.telephony.gsm.GSMPhone;
-import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.uicc.IccRecords;
 
 import java.util.ArrayList;
@@ -98,9 +99,6 @@ public class ImsPhone extends ImsPhoneBase {
     protected static final int EVENT_GET_CALL_BARRING_DONE          = EVENT_LAST + 2;
     protected static final int EVENT_SET_CALL_WAITING_DONE          = EVENT_LAST + 3;
     protected static final int EVENT_GET_CALL_WAITING_DONE          = EVENT_LAST + 4;
-    protected static final int EVENT_SET_CLIR_DONE                  = EVENT_LAST + 5;
-    protected static final int EVENT_GET_CLIR_DONE                  = EVENT_LAST + 6;
-    private static final int EVENT_DEFAULT_PHONE_DATA_STATE_CHANGED  = EVENT_LAST + 7;
 
     public static final String CS_FALLBACK = "cs_fallback";
 
@@ -130,14 +128,6 @@ public class ImsPhone extends ImsPhoneBase {
 
     private final RegistrantList mSilentRedialRegistrants = new RegistrantList();
 
-    // List of Registrants to send supplementary service notifications to.
-    RegistrantList mSsnRegistrants = new RegistrantList();
-
-    // Variable to cache the video capabilitity. In cases where we delete/re-create the phone
-    // this information is getting lost.
-    private boolean mIsVideoCapable = false;
-
-    private boolean mImsRegistered = false;
     // A runnable which is used to automatically exit from Ecm after a period of time.
     private Runnable mExitEcmRunnable = new Runnable() {
         @Override
@@ -181,34 +171,12 @@ public class ImsPhone extends ImsPhoneBase {
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, LOG_TAG);
         mWakeLock.setReferenceCounted(false);
-
-        if (mDefaultPhone.getServiceStateTracker() != null) {
-            mDefaultPhone.getServiceStateTracker()
-                    .registerForDataRegStateOrRatChanged(this,
-                    EVENT_DEFAULT_PHONE_DATA_STATE_CHANGED, null);
-        }
-        updateDataServiceState();
     }
 
     public void updateParentPhone(PhoneBase parentPhone) {
         // synchronization is managed at the PhoneBase scope (which calls this function)
-        if (mDefaultPhone != null && mDefaultPhone.getServiceStateTracker() != null) {
-            mDefaultPhone.getServiceStateTracker().
-                    unregisterForDataRegStateOrRatChanged(this);
-        }
         mDefaultPhone = parentPhone;
         mPhoneId = mDefaultPhone.getPhoneId();
-        if (mDefaultPhone.getServiceStateTracker() != null) {
-            mDefaultPhone.getServiceStateTracker()
-                    .registerForDataRegStateOrRatChanged(this,
-                    EVENT_DEFAULT_PHONE_DATA_STATE_CHANGED, null);
-        }
-        updateDataServiceState();
-
-        // When the parent phone is updated, we need to notify listeners of the cached video
-        // capability.
-        Rlog.d(LOG_TAG, "updateParentPhone - Notify video capability changed " + mIsVideoCapable);
-        notifyForVideoCapabilityChanged(mIsVideoCapable);
     }
 
     @Override
@@ -220,15 +188,6 @@ public class ImsPhone extends ImsPhoneBase {
         mCT.dispose();
 
         //Force all referenced classes to unregister their former registered events
-        if (mDefaultPhone != null && mDefaultPhone.getServiceStateTracker() != null) {
-            mDefaultPhone.getServiceStateTracker().
-                    unregisterForDataRegStateOrRatChanged(this);
-        }
-    }
-
-    @Override
-    public Phone getImsPhone() {
-        return null;
     }
 
     @Override
@@ -248,40 +207,11 @@ public class ImsPhone extends ImsPhoneBase {
 
     /* package */ void setServiceState(int state) {
         mSS.setState(state);
-        updateDataServiceState();
     }
 
     @Override
     public CallTracker getCallTracker() {
         return mCT;
-    }
-
-    public boolean getCallForwardingIndicator() {
-        boolean cf = false;
-        IccRecords r = getIccRecords();
-        if (r != null && r.isCallForwardStatusStored()) {
-            cf = r.getVoiceCallForwardingFlag();
-        } else {
-            cf = getCallForwardingPreference();
-        }
-        return cf;
-    }
-
-    /**
-     * Used to check if Call Forwarding status is present on sim card. If not, a message is
-     * sent so we can check if the CF status is stored as a Shared Preference.
-     */
-    public void updateCallForwardStatus() {
-        Rlog.d(LOG_TAG, "updateCallForwardStatus");
-        IccRecords r = getIccRecords();
-        if (r != null && r.isCallForwardStatusStored()) {
-            // The Sim card has the CF info
-            Rlog.d(LOG_TAG, "Callforwarding info is present on sim");
-            notifyCallForwardingIndicator();
-        } else {
-            Message msg = obtainMessage(EVENT_GET_CALLFORWARDING_STATUS);
-            sendMessage(msg);
-        }
     }
 
     @Override
@@ -295,12 +225,6 @@ public class ImsPhone extends ImsPhoneBase {
     public void
     acceptCall(int videoState) throws CallStateException {
         mCT.acceptCall(videoState);
-    }
-
-    @Override
-    public void
-    deflectCall(String number) throws CallStateException {
-        mCT.deflectCall(number);
     }
 
     @Override
@@ -485,13 +409,6 @@ public class ImsPhone extends ImsPhoneBase {
         return true;
     }
 
-    public void notifySuppSvcNotification(SuppServiceNotification suppSvc) {
-        Rlog.d(LOG_TAG, "notifySuppSvcNotification: suppSvc = " + suppSvc);
-
-        AsyncResult ar = new AsyncResult(null, suppSvc, null);
-        mSsnRegistrants.notifyRegistrants(ar);
-    }
-
     @Override
     public boolean handleInCallMmiCommands(String dialString) {
         if (!isInCall()) {
@@ -546,63 +463,38 @@ public class ImsPhone extends ImsPhoneBase {
         mDefaultPhone.notifyNewRingingConnectionP(c);
     }
 
-    void notifyUnknownConnection(Connection c) {
-        mDefaultPhone.notifyUnknownConnectionP(c);
-    }
-
-    public void notifyForVideoCapabilityChanged(boolean isVideoCapable) {
-        mIsVideoCapable = isVideoCapable;
-        mDefaultPhone.notifyForVideoCapabilityChanged(isVideoCapable);
-    }
-
-    @Override
-    public Connection
-    dial(String dialString, int videoState, Bundle extras) throws CallStateException {
-        return dialInternal(dialString, videoState, extras);
-    }
 
     @Override
     public Connection
     dial(String dialString, int videoState) throws CallStateException {
-        return dialInternal(dialString, videoState, null);
+        return dialInternal(dialString, videoState);
     }
 
-    protected Connection dialInternal(String dialString, int videoState, Bundle extras)
+    protected Connection dialInternal(String dialString, int videoState)
             throws CallStateException {
-        boolean isConferenceUri = false;
-        boolean isSkipSchemaParsing = false;
-        if (extras != null) {
-            isConferenceUri = extras.getBoolean(TelephonyProperties.EXTRA_DIAL_CONFERENCE_URI,
-                    false);
-            isSkipSchemaParsing = extras.getBoolean(TelephonyProperties.EXTRA_SKIP_SCHEMA_PARSING,
-                    false);
-        }
-        String newDialString = dialString;
         // Need to make sure dialString gets parsed properly
-        if (!isConferenceUri && !isSkipSchemaParsing) {
-            newDialString = PhoneNumberUtils.stripSeparators(dialString);
-        }
+        String newDialString = PhoneNumberUtils.stripSeparators(dialString);
 
         // handle in-call MMI first if applicable
         if (handleInCallMmiCommands(newDialString)) {
             return null;
         }
 
-        String networkPortion = newDialString;
-        if (!ImsPhoneMmiCode.isScMatchesSuppServType(newDialString)) {
-            // Only look at the Network portion for mmi
-            networkPortion = PhoneNumberUtils.extractNetworkPortionAlt(newDialString);
+        if (mDefaultPhone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA) {
+            return mCT.dial(dialString, videoState);
         }
 
+        // Only look at the Network portion for mmi
+        String networkPortion = PhoneNumberUtils.extractNetworkPortionAlt(newDialString);
         ImsPhoneMmiCode mmi =
                 ImsPhoneMmiCode.newFromDialString(networkPortion, this);
         if (DBG) Rlog.d(LOG_TAG,
                 "dialing w/ mmi '" + mmi + "'...");
 
         if (mmi == null) {
-            return mCT.dial(dialString, videoState, extras);
+            return mCT.dial(dialString, videoState);
         } else if (mmi.isTemporaryModeCLIR()) {
-            return mCT.dial(mmi.getDialingNumber(), mmi.getCLIRMode(), videoState, extras);
+            return mCT.dial(mmi.getDialingNumber(), mmi.getCLIRMode(), videoState);
         } else if (!mmi.isSupportedOverImsPhone()) {
             // If the mmi is not supported by IMS service,
             // try to initiate dialing with default phone
@@ -614,11 +506,6 @@ public class ImsPhone extends ImsPhoneBase {
 
             return null;
         }
-    }
-
-    @Override
-    public void addParticipant(String dialString) throws CallStateException {
-        mCT.addParticipant(dialString);
     }
 
     @Override
@@ -637,18 +524,18 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public void
     startDtmf(char c) {
-        if (!(PhoneNumberUtils.is12Key(c) || (c >= 'A' && c <= 'D'))) {
+        if (!PhoneNumberUtils.is12Key(c)) {
             Rlog.e(LOG_TAG,
                     "startDtmf called with invalid character '" + c + "'");
         } else {
-            mCT.startDtmf(c);
+            sendDtmf(c);
         }
     }
 
     @Override
     public void
     stopDtmf() {
-        mCT.stopDtmf();
+        // no op
     }
 
     @Override
@@ -665,11 +552,6 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public void setMute(boolean muted) {
         mCT.setMute(muted);
-    }
-
-    @Override
-    public void setUiTTYMode(int uiTtyMode, Message onComplete) {
-        mCT.setUiTTYMode(uiTtyMode, onComplete);
     }
 
     @Override
@@ -718,8 +600,6 @@ public class ImsPhone extends ImsPhoneBase {
             case CF_REASON_BUSY: return ImsUtInterface.CDIV_CF_BUSY;
             case CF_REASON_NO_REPLY: return ImsUtInterface.CDIV_CF_NO_REPLY;
             case CF_REASON_NOT_REACHABLE: return ImsUtInterface.CDIV_CF_NOT_REACHABLE;
-            case CF_REASON_ALL: return ImsUtInterface.CDIV_CF_ALL;
-            case CF_REASON_ALL_CONDITIONAL: return ImsUtInterface.CDIV_CF_ALL_CONDITIONAL;
             default:
                 break;
         }
@@ -733,8 +613,6 @@ public class ImsPhone extends ImsPhoneBase {
             case ImsUtInterface.CDIV_CF_BUSY: return CF_REASON_BUSY;
             case ImsUtInterface.CDIV_CF_NO_REPLY: return CF_REASON_NO_REPLY;
             case ImsUtInterface.CDIV_CF_NOT_REACHABLE: return CF_REASON_NOT_REACHABLE;
-            case ImsUtInterface.CDIV_CF_ALL: return CF_REASON_ALL;
-            case ImsUtInterface.CDIV_CF_ALL_CONDITIONAL: return CF_REASON_ALL_CONDITIONAL;
             default:
                 break;
         }
@@ -753,33 +631,6 @@ public class ImsPhone extends ImsPhoneBase {
         }
 
         return ImsUtInterface.INVALID;
-    }
-
-    @Override
-    public void getOutgoingCallerIdDisplay(Message onComplete) {
-        if (DBG) Rlog.d(LOG_TAG, "getCLIR");
-        Message resp;
-        resp = obtainMessage(EVENT_GET_CLIR_DONE, onComplete);
-
-        try {
-            ImsUtInterface ut = mCT.getUtInterface();
-            ut.queryCLIR(resp);
-        } catch (ImsException e) {
-            sendErrorResponse(onComplete, e);
-        }
-    }
-
-    @Override
-    public void setOutgoingCallerIdDisplay(int clirMode, Message onComplete) {
-        if (DBG) Rlog.d(LOG_TAG, "setCLIR action= " + clirMode);
-        Message resp;
-        resp = obtainMessage(EVENT_SET_CLIR_DONE, onComplete);
-        try {
-            ImsUtInterface ut = mCT.getUtInterface();
-            ut.updateCLIR(clirMode, resp);
-        } catch (ImsException e) {
-            sendErrorResponse(onComplete, e);
-        }
     }
 
     @Override
@@ -833,38 +684,6 @@ public class ImsPhone extends ImsPhoneBase {
             sendErrorResponse(onComplete);
         }
     }
-
-    @Override
-    public void setCallForwardingUncondTimerOption(int startHour, int startMinute,
-            int endHour, int endMinute, int commandInterfaceCFAction,
-            int commandInterfaceCFReason, String dialingNumber, Message onComplete) {
-        if (DBG) Rlog.d(LOG_TAG, "setCallForwardingUncondTimerOption action="
-                + commandInterfaceCFAction + ", reason=" + commandInterfaceCFReason
-                + ", startHour=" + startHour + ", startMinute=" + startMinute
-                + ", endHour=" + endHour + ", endMinute=" + endMinute);
-        if ((isValidCommandInterfaceCFAction(commandInterfaceCFAction)) &&
-                (isValidCommandInterfaceCFReason(commandInterfaceCFReason))) {
-            Message resp;
-            Cf cf = new Cf(dialingNumber,
-                    (commandInterfaceCFReason == CF_REASON_UNCONDITIONAL ? true : false),
-                    onComplete);
-            resp = obtainMessage(EVENT_SET_CALL_FORWARD_TIMER_DONE,
-                    isCfEnable(commandInterfaceCFAction) ? 1 : 0, 0, cf);
-
-            try {
-                ImsUtInterface ut = mCT.getUtInterface();
-                ut.updateCallForwardUncondTimer(startHour, startMinute, endHour,
-                        endMinute, getActionFromCFAction(commandInterfaceCFAction),
-                        getConditionFromCFReason(commandInterfaceCFReason),
-                        dialingNumber, resp);
-             } catch (ImsException e) {
-                sendErrorResponse(onComplete, e);
-             }
-        } else if (onComplete != null) {
-            sendErrorResponse(onComplete);
-        }
-    }
-
 
     @Override
     public void getCallWaiting(Message onComplete) {
@@ -937,18 +756,10 @@ public class ImsPhone extends ImsPhoneBase {
         Message resp;
         resp = obtainMessage(EVENT_SET_CALL_BARRING_DONE, onComplete);
 
-        int action;
-        if (lockState) {
-            action = CommandsInterface.CF_ACTION_ENABLE;
-        }
-        else {
-            action = CommandsInterface.CF_ACTION_DISABLE;
-        }
-
         try {
             ImsUtInterface ut = mCT.getUtInterface();
             // password is not required with Ut interface
-            ut.updateCallBarring(getCBTypeFromFacility(facility), action, resp, null);
+            ut.updateCallBarring(getCBTypeFromFacility(facility), lockState, resp, null);
         } catch (ImsException e) {
             sendErrorResponse(onComplete, e);
         }
@@ -1003,12 +814,7 @@ public class ImsPhone extends ImsPhoneBase {
 
     /* package */
     CommandException getCommandException(int code) {
-        return getCommandException(code, null);
-    }
-
-    CommandException getCommandException(int code, String errorString) {
-        Rlog.d(LOG_TAG, "getCommandException code= " + code
-                + ", errorString= " + errorString);
+        Rlog.d(LOG_TAG, "getCommandException code=" + code);
         CommandException.Error error = CommandException.Error.GENERIC_FAILURE;
 
         switch(code) {
@@ -1022,7 +828,7 @@ public class ImsPhone extends ImsPhoneBase {
                 break;
         }
 
-        return new CommandException(error, errorString);
+        return new CommandException(error);
     }
 
     /* package */
@@ -1030,7 +836,7 @@ public class ImsPhone extends ImsPhoneBase {
         CommandException ex = null;
 
         if (e instanceof ImsException) {
-            ex = getCommandException(((ImsException)e).getCode(), e.getMessage());
+            ex = getCommandException(((ImsException)e).getCode());
         } else {
             Rlog.d(LOG_TAG, "getCommandException generic failure");
             ex = new CommandException(CommandException.Error.GENERIC_FAILURE);
@@ -1107,19 +913,21 @@ public class ImsPhone extends ImsPhoneBase {
         }
     }
 
-    public ArrayList<Connection> getHandoverConnection() {
-        ArrayList<Connection> connList = new ArrayList<Connection>();
-        // Add all foreground call connections
-        connList.addAll(getForegroundCall().mConnections);
-        // Add all background call connections
-        connList.addAll(getBackgroundCall().mConnections);
-        // Add all background call connections
-        connList.addAll(getRingingCall().mConnections);
-        if (connList.size() > 0) {
-            return connList;
-        } else {
-            return null;
+    public ImsPhoneConnection getHandoverConnection() {
+        // handover for single foreground call
+        ImsPhoneConnection conn = getForegroundCall().getHandoverConnection();
+
+        // handover for single background call
+        if (conn == null) {
+            conn = getBackgroundCall().getHandoverConnection();
         }
+
+        // handover for single ringing call
+        if (conn == null) {
+            conn = getRingingCall().getHandoverConnection();
+        }
+
+        return conn;
     }
 
     public void notifySrvccState(Call.SrvccState state) {
@@ -1144,24 +952,8 @@ public class ImsPhone extends ImsPhoneBase {
     }
 
     @Override
-    public void registerForSuppServiceNotification(
-            Handler h, int what, Object obj) {
-        mSsnRegistrants.addUnique(h, what, obj);
-    }
-
-    @Override
-    public void unregisterForSuppServiceNotification(Handler h) {
-        mSsnRegistrants.remove(h);
-    }
-
     public int getSubId() {
         return mDefaultPhone.getSubId();
-    }
-
-    @Override
-    public String getSubscriberId() {
-        IccRecords r = getIccRecords();
-        return (r != null) ? r.getIMSI() : null;
     }
 
     @Override
@@ -1169,7 +961,18 @@ public class ImsPhone extends ImsPhoneBase {
         return mDefaultPhone.getPhoneId();
     }
 
-    public IccRecords getIccRecords() {
+    /*MTK add*/
+    //@Override
+    public CommandsInterface getCommandsInterface() {
+        return mDefaultPhone.mCi;
+    }
+
+    @Override
+    public Subscription getSubscriptionInfo() {
+        return mDefaultPhone.getSubscriptionInfo();
+    }
+
+    private IccRecords getIccRecords() {
         return mDefaultPhone.mIccRecords.get();
     }
 
@@ -1181,10 +984,6 @@ public class ImsPhone extends ImsPhoneBase {
         cfInfo.toa = info.mToA;
         cfInfo.number = info.mNumber;
         cfInfo.timeSeconds = info.mTimeSeconds;
-        cfInfo.startHour = info.mStartHour;
-        cfInfo.startMinute = info.mStartMinute;
-        cfInfo.endHour = info.mEndHour;
-        cfInfo.endMinute = info.mEndMinute;
         return cfInfo;
     }
 
@@ -1245,22 +1044,10 @@ public class ImsPhone extends ImsPhoneBase {
         if (onComplete != null) {
             CommandException ex = null;
             if (e != null) {
-                    ex = getCommandException(e);
-                    AsyncResult.forMessage(onComplete, result, ex);
-            } else {
-                AsyncResult.forMessage(onComplete, result, null);
+                ex = getCommandException(e);
             }
+            AsyncResult.forMessage(onComplete, result, ex);
             onComplete.sendToTarget();
-        }
-    }
-
-    private void updateDataServiceState() {
-        if (mSS != null && mDefaultPhone.getServiceStateTracker() != null
-                && mDefaultPhone.getServiceStateTracker().mSS != null) {
-            ServiceState ss = mDefaultPhone.getServiceStateTracker().mSS;
-            mSS.setDataRegState(ss.getDataRegState());
-            mSS.setRilDataRadioTechnology(ss.getRilDataRadioTechnology());
-            Rlog.d(LOG_TAG, "updateDataServiceState: defSs = " + ss + " imsSs = " + mSS);
         }
     }
 
@@ -1288,11 +1075,6 @@ public class ImsPhone extends ImsPhoneBase {
                 sendResponse((Message) ar.userObj, cfInfos, ar.exception);
                 break;
 
-             case EVENT_SET_CALL_FORWARD_TIMER_DONE:
-                Cf cft = (Cf) ar.userObj;
-                sendResponse(cft.mOnComplete, null, ar.exception);
-                break;
-
              case EVENT_GET_CALL_BARRING_DONE:
              case EVENT_GET_CALL_WAITING_DONE:
                 int[] ssInfos = null;
@@ -1306,31 +1088,10 @@ public class ImsPhone extends ImsPhoneBase {
                 sendResponse((Message) ar.userObj, ssInfos, ar.exception);
                 break;
 
-              case EVENT_GET_CLIR_DONE:
-                Bundle ssInfo = (Bundle) ar.result;
-                int[] clirInfo = null;
-                if (ssInfo != null) {
-                    clirInfo = ssInfo.getIntArray(ImsPhoneMmiCode.UT_BUNDLE_KEY_CLIR);
-                }
-                sendResponse((Message) ar.userObj, clirInfo, ar.exception);
-                break;
-
-             case EVENT_SET_CLIR_DONE:
              case EVENT_SET_CALL_BARRING_DONE:
              case EVENT_SET_CALL_WAITING_DONE:
                 sendResponse((Message) ar.userObj, null, ar.exception);
                 break;
-
-            case EVENT_GET_CALLFORWARDING_STATUS:
-                boolean cfEnabled = getCallForwardingPreference();
-                if (DBG) Rlog.d(LOG_TAG, "Callforwarding is " + cfEnabled);
-                notifyCallForwardingIndicator();
-                break;
-
-             case EVENT_DEFAULT_PHONE_DATA_STATE_CHANGED:
-                 if (DBG) Rlog.d(LOG_TAG, "EVENT_DEFAULT_PHONE_DATA_STATE_CHANGED");
-                 updateDataServiceState();
-                 break;
 
              default:
                  super.handleMessage(msg);
@@ -1475,16 +1236,5 @@ public class ImsPhone extends ImsPhoneBase {
 
     public boolean isVtEnabled() {
         return mCT.isVtEnabled();
-    }
-
-    public boolean isUtEnabled() {
-        return mCT.isUtEnabled();
-    }
-
-    public boolean isImsRegistered() {
-        return mImsRegistered;
-    }
-    public void setImsRegistered(boolean value) {
-        mImsRegistered = value;
     }
 }

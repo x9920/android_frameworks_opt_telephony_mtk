@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
- * Not a Contribution.
- *
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -443,7 +440,7 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void supplyDepersonalization(String netpin, String type, Message result)  {
+    public void supplyNetworkDepersonalization(String netpin, Message result)  {
         unimplemented(result);
     }
 
@@ -869,7 +866,7 @@ public final class SimulatedCommands extends BaseCommands
      */
     @Override
     public void handleCallSetupRequestFromSim(
-            boolean accept, Message response) {
+            boolean accept, int resCode, Message response) {
         resultSuccess(response, null);
     }
 
@@ -1037,7 +1034,7 @@ public final class SimulatedCommands extends BaseCommands
     @Override
     public void setupDataCall(String radioTechnology, String profile,
             String apn, String user, String password, String authType,
-            String protocol, Message result) {
+            String protocol, String interfaceId, Message result) {
         unimplemented(result);
     }
 
@@ -1194,6 +1191,22 @@ public final class SimulatedCommands extends BaseCommands
      * @param serviceClass is a sum of SERVICE_CLASS_*
      * @param response is callback message
      */
+    /* M: SS part */
+    public void setCLIP(boolean enable, Message result) {
+    }
+
+    public void getCOLR(Message response) {
+        unimplemented(response);
+    }
+
+    public void setCOLP(boolean enable, Message response) {
+        unimplemented(response);
+    }
+
+    public void getCOLP(Message response) {
+        unimplemented(response);
+    }
+    /* M: SS part end */
 
     @Override
     public void queryCallWaiting(int serviceClass, Message response) {
@@ -1268,20 +1281,6 @@ public final class SimulatedCommands extends BaseCommands
     @Override
     public void getBasebandVersion (Message result) {
         resultSuccess(result, "SimulatedCommands");
-    }
-
-    /**
-     * Simulates an Stk Call Control Alpha message
-     * @param alphaString Alpha string to send.
-     */
-    public void triggerIncomingStkCcAlpha(String alphaString) {
-        if (mCatCcAlphaRegistrant != null) {
-            mCatCcAlphaRegistrant.notifyResult(alphaString);
-        }
-    }
-
-    public void sendStkCcAplha(String alphaString) {
-        triggerIncomingStkCcAlpha(alphaString);
     }
 
     /**
@@ -1699,6 +1698,11 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+    }
+
+    @Override
     public void setDataProfile(DataProfile[] dps, Message result) {
     }
 
@@ -1742,11 +1746,6 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     @Override
-    public void getAtr(Message response) {
-        unimplemented(response);
-    }
-
-    @Override
     public void nvReadItem(int itemID, Message response) {
         unimplemented(response);
     }
@@ -1776,5 +1775,87 @@ public final class SimulatedCommands extends BaseCommands
         setRadioState(RadioState.RADIO_UNAVAILABLE);
     }
 
-    public boolean needsOldRilFeature(String feature) { return false; }
+    /* M: SS part */
+    public void changeBarringPassword(String facility, String oldPwd, String newPwd,
+        String newCfm , Message result) {
+            unimplemented(result);
+    }
+    /* M: SS part end */
+
+    /* M: call control part start */
+    public void emergencyDial(String address, int clirMode, UUSInfo uusInfo, Message result) {
+        resultSuccess(result, null);
+    }
+
+    public void hangupAll(Message result) {
+        resultSuccess(result, null);
+    }
+
+    public void forceReleaseCall(int index, Message response) {
+        unimplemented(response);
+    }
+
+    public void setCallIndication(int mode, int callId, int seqNumber, Message response) {
+        unimplemented(response);
+    }
+    /* M: call control part end */
+    // Added by M begin
+    @Override
+    public void iccGetATR(Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void iccOpenChannelWithSw(String AID, Message response) {
+        unimplemented(response);
+    }
+    // Added by M end
+
+    @Override
+    public void setTrm(int mode, Message result) {
+    }
+
+    @Override
+    public void setResumeRegistration(int sessionId, Message response) {
+    }
+
+    @Override
+    public void queryModemType(Message response) {
+    }
+
+    @Override
+    public void storeModemType(int modemType, Message response) {
+    }
+
+    // M: Fast Dormancy
+    public void setScri(boolean forceRelease, Message response) {
+        resultSuccess(response, null);
+    }
+
+    public void setFDMode(int mode, int parameter1, int parameter2, Message response) {
+    }
+    
+    // UTK start
+    public void getUtkLocalInfo(Message response) {
+        unimplemented(response);
+    }
+
+    public void requestUtkRefresh(int type, Message response) {
+        unimplemented(response);
+    }
+
+    public void handleCallSetupRequestFromUim(boolean accept, Message response) {
+        unimplemented(response);
+    }
+
+    public void reportUtkServiceIsRunning(Message result) {
+        resultSuccess(result, null);
+    }
+
+    public void profileDownload(String profile, Message response) {
+        resultSuccess(response, null);
+    }
+    //UTK end
+
+
 }

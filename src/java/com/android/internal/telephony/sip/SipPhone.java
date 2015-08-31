@@ -26,7 +26,6 @@ import android.net.sip.SipManager;
 import android.net.sip.SipProfile;
 import android.net.sip.SipSession;
 import android.os.AsyncResult;
-import android.os.Bundle;
 import android.os.Message;
 import android.telephony.DisconnectCause;
 import android.telephony.PhoneNumberUtils;
@@ -44,6 +43,10 @@ import com.android.internal.telephony.PhoneNotifier;
 import java.text.ParseException;
 import java.util.List;
 import java.util.regex.Pattern;
+
+/* M: call control part start */
+import com.android.internal.telephony.UUSInfo;
+/* M: call control part end */
 
 /**
  * {@hide}
@@ -117,6 +120,24 @@ public class SipPhone extends SipPhoneBase {
 
             try {
                 SipAudioCall sipAudioCall = (SipAudioCall) incomingCall;
+
+                /* M: call control part start */
+                /*
+                // check if any incoming calls exist
+                if (false) {
+                //if (FeatureOption.MTK_DT_SUPPORT == false) {
+                    if (mCM.getRingingCallCount() > 0 ) {
+                        Rlog.d(LOG_TAG, "reject sip incoming because other MT call exists");
+                        return false;
+                    }
+                } else {
+                    if (mCM.getRingingCallCount() > 1) {
+                        Rlog.d(LOG_TAG, "reject sip incoming because other MT call exists");
+                        return false;
+                    }
+                }
+                */
+                /* M: call control part end */
                 if (DBG) log("takeIncomingCall: taking call from: "
                         + sipAudioCall.getPeerProfile().getUriString());
                 String localUri = sipAudioCall.getLocalProfile().getUriString();
@@ -214,7 +235,19 @@ public class SipPhone extends SipPhoneBase {
 
     @Override
     public void switchHoldingAndActive() throws CallStateException {
-        if (DBG) log("dialInternal: switch fg and bg");
+        if (DBG) log("switchHoldingAndActive: switch fg and bg");
+        /* M: call control part start */
+        /// ALPS00041991
+        if ((mForegroundCall.getState() == SipCall.State.DIALING)) {
+             throw new CallStateException("wrong state to swap calls: fg="
+                        + mForegroundCall.getState() + ", bg="
+                        + mBackgroundCall.getState());
+        }
+
+        if (!mForegroundCall.isInCallOrIdle() || !mBackgroundCall.isInCallOrIdle())
+            throw new CallStateException("wrong state to swap calls");
+        /* M: call control part end */
+
         synchronized (SipPhone.class) {
             mForegroundCall.switchWith(mBackgroundCall);
             if (mBackgroundCall.getState().isAlive()) mBackgroundCall.hold();
@@ -248,6 +281,14 @@ public class SipPhone extends SipPhoneBase {
                 throw new CallStateException("expect " + SipCall.class
                         + ", cannot merge with " + that.getClass());
             }
+            /* M: call control part start */
+            // To check call state before conference.
+            if ((mForegroundCall.getState() != SipCall.State.ACTIVE)) {
+                throw new CallStateException("wrong state to merge calls: fg="
+                        + mForegroundCall.getState() + ", bg="
+                        + mBackgroundCall.getState());
+            }
+            /* M: call control part end */
             mForegroundCall.merge((SipCall) that);
         }
     }
@@ -428,6 +469,24 @@ public class SipPhone extends SipPhoneBase {
         Rlog.e(LOG_TAG, s, e);
     }
 
+    /* M: call control part start */
+    public void hangupAll() throws CallStateException {
+        synchronized (SipPhone.class) {
+            mForegroundCall.hangup();
+            mBackgroundCall.hangup();
+            mRingingCall.hangup();
+        }
+    }
+
+    /// M: [ALPS00301788]Can not hang up SIP call via BT headset
+    public void hangupActiveCall() throws CallStateException {
+        synchronized (SipPhone.class) {
+            mForegroundCall.hangup();
+        }
+    }
+    /// @}
+    /* M: call control part end */
+
     private class SipCall extends SipCallBase {
         private static final String SC_TAG = "SipCall";
         private static final boolean SC_DBG = true;
@@ -492,6 +551,9 @@ public class SipPhone extends SipPhoneBase {
                 return c;
             } catch (ParseException e) {
                 throw new SipException("dial", e);
+            // M: Catch all the other exceptions.
+            } catch (Exception ee) {
+                throw new SipException("dial", ee);
             }
         }
 
@@ -517,6 +579,32 @@ public class SipPhone extends SipPhoneBase {
                 }
             }
         }
+
+        /* M: call control part start */
+        /* [ALPS00475147] to disc only RingingCall with specific cause instead of INCOMING_REJECTED */
+        @Override
+        public void hangup(int discRingingCallCause) throws CallStateException {
+            synchronized (SipPhone.class) {
+                if (mState.isAlive()) {
+                    if (VDBG) Rlog.d(LOG_TAG, "hang up call: " + getState()
+                            + ": " + this + " on phone " + getPhone());
+                    setState(State.DISCONNECTING);
+                    CallStateException excp = null;
+                    for (Connection c : mConnections) {
+                        try {
+                            c.hangup(discRingingCallCause);
+                        } catch (CallStateException e) {
+                            excp = e;
+                        }
+                    }
+                    if (excp != null) throw excp;
+                } else {
+                    if (VDBG) Rlog.d(LOG_TAG, "hang up dead call: " + getState()
+                            + ": " + this + " on phone " + getPhone());
+                }
+            }
+        }
+        /* M: call control part end */
 
         SipConnection initIncomingCall(SipAudioCall sipAudioCall, boolean makeCallWait) {
             SipProfile callee = sipAudioCall.getPeerProfile();
@@ -676,9 +764,34 @@ public class SipPhone extends SipPhoneBase {
                 } else if (mState == Call.State.ALERTING) {
                     stopRingbackTone();
                 }
+
+                /* M: call control part start */
+                // Start sip phone ring.
+                if (newState == Call.State.INCOMING) {
+                    Rlog.d(LOG_TAG, "Start the SIP phone ring");
+                    notifySipCallRing();
+                } else if (mState != Call.State.INCOMING && newState == Call.State.DISCONNECTED && mConnections.size() == 1) {
+                    if (SipPhone.this.getRingingCall().isRinging()) {
+                        Rlog.d(LOG_TAG, "Start the SIP phone ring after the call is ended");
+                        /* For solving ALPS00542520, change the state of ringing call from WAITING to INCOMING
+                           when there is no more foreground and background call */
+                        if (mRingingCall.getState() == Call.State.WAITING) {
+                            mRingingCall.mState = Call.State.INCOMING;
+                            Rlog.d(LOG_TAG, "[setState]Change WAITING to INCOMING.  New state = " + mRingingCall.mState);
+                        }
+                        notifySipCallRing();
+                    }
+                }
+                /* M: call control part end */
+
                 mState = newState;
                 updatePhoneState();
                 notifyPreciseCallStateChanged();
+
+                /* M: call control part start */
+                if (mState == Call.State.ACTIVE)
+                    notifyPhoneStateChanged();
+                /* M: call control part end */
             }
         }
 
@@ -707,8 +820,36 @@ public class SipPhone extends SipPhoneBase {
                 }
                 if (allConnectionsDisconnected) setState(State.DISCONNECTED);
             }
+            /* M: call control part start */
+            //Remove from mConnections when connection is ended.
+            mConnections.remove(conn);
+            /* M: call control part end */
             notifyDisconnectP(conn);
         }
+
+        /* M: call control part start */
+        /**
+          * Helper method used to call operation, switchHoldingAndActive and seperate;
+          * @return true if one of the following conditions happens,
+          * (1) The call is in IN_CALL state.
+          * (2) There is no connection attached to the call, i.e. in IDLE state
+          */
+        boolean isInCallOrIdle() {
+            if (SC_DBG) log("isInCallOrIdle: conn.size=" + mConnections.size());
+            for (Connection c : mConnections) {
+                if (SC_DBG) log("isInCallOrIdle: conn=" + c);
+                SipAudioCall sipAudioCall = ((SipConnection) c).getSipAudioCall();
+                if (sipAudioCall == null)
+                    return false;
+                SipSession sipSession = sipAudioCall.getSipSession();
+                if (sipSession == null)
+                    return false;
+                if (sipSession.getState() != SipSession.State.IN_CALL)
+                    return false;
+            }
+            return true;
+        }
+        /* M: call control part end */
 
         private AudioGroup getAudioGroup() {
             if (mConnections.isEmpty()) return null;
@@ -803,6 +944,17 @@ public class SipPhone extends SipPhoneBase {
             @Override
             protected void onError(int cause) {
                 if (SCN_DBG) log("onError: " + cause);
+
+                /* M: call control part start */
+                // [ALPS00036160]
+                try {
+                    if (cause == DisconnectCause.SERVER_UNREACHABLE) {
+                        Thread.sleep(1000);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                /* M: call control part end */
                 onCallEnded(cause);
             }
         };
@@ -855,6 +1007,13 @@ public class SipPhone extends SipPhoneBase {
             return mSipAudioCall.getAudioGroup();
         }
 
+        /* M: call control part start */
+        SipAudioCall getSipAudioCall() {
+            if (mSipAudioCall == null) return null;
+            return mSipAudioCall;
+        }
+        /* M: call control part end */
+
         void dial() throws SipException {
             setState(Call.State.DIALING);
             mSipAudioCall = mSipManager.makeAudioCall(mProfile, mPeer, null,
@@ -863,22 +1022,52 @@ public class SipPhone extends SipPhoneBase {
         }
 
         void hold() throws CallStateException {
-            setState(Call.State.HOLDING);
-            try {
-                mSipAudioCall.holdCall(TIMEOUT_HOLD_CALL);
-            } catch (SipException e) {
-                throw new CallStateException("hold(): " + e);
+            /* M: call control part start */
+            synchronized (SipPhone.class) {
+                if (mSipAudioCall == null) {
+                    // Add check sipconnection's state for ALPS01002558 by mtk01411
+                    Call.State currentState = getState();
+                    log("SipConnection.hold():mSipAudioCall is null, state=" + currentState);
+                    if (currentState == Call.State.DISCONNECTED) {
+                        //This sipConnection is already DISCONNECTED -> Can't be held, do nothing & return directly
+                        return;
+                    } else {
+                        throw new CallStateException("unhold(): mSipAudioCall is null");
+                    }
+                }
+                setState(Call.State.HOLDING);
+                try {
+                    mSipAudioCall.holdCall(TIMEOUT_HOLD_CALL);
+                } catch (SipException e) {
+                    throw new CallStateException("hold(): " + e);
+                }
             }
+            /* M: call control part end */
         }
 
         void unhold(AudioGroup audioGroup) throws CallStateException {
-            mSipAudioCall.setAudioGroup(audioGroup);
-            setState(Call.State.ACTIVE);
-            try {
-                mSipAudioCall.continueCall(TIMEOUT_HOLD_CALL);
-            } catch (SipException e) {
-                throw new CallStateException("unhold(): " + e);
+            /* M: call control part start */
+            synchronized (SipPhone.class) {
+                if (mSipAudioCall == null) {
+                    //Add check sipconnection's state for ALPS01002558 by mtk01411
+                    Call.State currentState = getState();
+                    log("SipConnection.unhold():mSipAudioCall is null, state=" + currentState);
+                    if (currentState == Call.State.DISCONNECTED) {
+                        //This sipConnection is already DISCONNECTED -> Can't be held, do nothing & return directly
+                        return;
+                    } else {
+                        throw new CallStateException("unhold(): mSipAudioCall is null");
+                    }
+                }
+                mSipAudioCall.setAudioGroup(audioGroup);
+                setState(Call.State.ACTIVE);
+                try {
+                    mSipAudioCall.continueCall(TIMEOUT_HOLD_CALL);
+                } catch (SipException e) {
+                    throw new CallStateException("unhold(): " + e);
+                }
             }
+            /* M: call control part end */
         }
 
         void setMute(boolean muted) {
@@ -952,8 +1141,36 @@ public class SipPhone extends SipPhoneBase {
             }
         }
 
+        /* M: call control part start */
+        /* [ALPS00475147] for disc only RingingConnection with specific cause */
+        @Override
+        public void hangup(int discRingingConnectionCause) throws CallStateException {
+            synchronized (SipPhone.class) {
+                if (VDBG) Rlog.d(LOG_TAG, "hangup conn: " + mPeer.getUriString()
+                        + ": " + mState + ": on phone "
+                        + getPhone().getPhoneName());
+                if (!mState.isAlive()) return;
+                try {
+                    SipAudioCall sipAudioCall = mSipAudioCall;
+                    if (sipAudioCall != null) {
+                        sipAudioCall.setListener(null);
+                        sipAudioCall.endCall();
+                    }
+                } catch (SipException e) {
+                    throw new CallStateException("hangup(): " + e);
+                } finally {
+                    mAdapter.onCallEnded(((mState == Call.State.INCOMING)
+                            || (mState == Call.State.WAITING))
+                            ? discRingingConnectionCause
+                            : DisconnectCause.LOCAL);
+                }
+            }
+        }
+        /* M: call control part end */
+
         @Override
         public void separate() throws CallStateException {
+            if (DBG) log("separate");
             synchronized (SipPhone.class) {
                 SipCall call = (getPhone() == SipPhone.this)
                         ? (SipCall) getBackgroundCall()
@@ -966,6 +1183,11 @@ public class SipPhone extends SipPhoneBase {
                 if (SCN_DBG) log("separate: conn="
                         + mPeer.getUriString() + " from " + mOwner + " back to "
                         + call);
+
+                /* M: call control part start */
+                if (!mForegroundCall.isInCallOrIdle() || !mBackgroundCall.isInCallOrIdle())
+                    throw new CallStateException("wrong state to separate call");
+                /* M: call control part end */
 
                 // separate the AudioGroup and connection from the original call
                 Phone originalPhone = getPhone();
@@ -987,6 +1209,14 @@ public class SipPhone extends SipPhoneBase {
         private void log(String s) {
             Rlog.d(SCN_TAG, s);
         }
+
+        /* M: call control part start */
+        /// M: Add dummy method. @{
+        @Override
+        public UUSInfo getUUSInfo() {
+            return null;
+        }
+        /* M: call control part end */
     }
 
     private abstract class SipAudioCallAdapter extends SipAudioCall.Listener {
@@ -1054,13 +1284,5 @@ public class SipPhone extends SipPhoneBase {
         private void log(String s) {
             Rlog.d(SACA_TAG, s);
         }
-    }
-
-    @Override
-    public Connection dial(String dialString, int videoState, Bundle extras)
-            throws CallStateException {
-        // NOTE: Add implementation if call extras are needed to be
-        //       passed through SIP phone.
-        return null;
     }
 }

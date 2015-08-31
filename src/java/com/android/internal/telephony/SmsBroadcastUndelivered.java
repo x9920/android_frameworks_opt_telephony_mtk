@@ -41,10 +41,14 @@ public class SmsBroadcastUndelivered implements Runnable {
     private static final String TAG = "SmsBroadcastUndelivered";
     private static final boolean DBG = InboundSmsHandler.DBG;
 
+    /** Delete any partial message segments older than 30 days. */
+    static final long PARTIAL_SEGMENT_EXPIRE_AGE = (long) (60 * 60 * 1000) * 24 * 30;
+
     /**
      * Query projection for dispatching pending messages at boot time.
      * Column order must match the {@code *_COLUMN} constants in {@link InboundSmsHandler}.
      */
+    // MTK-START
     private static final String[] PDU_PENDING_MESSAGE_PROJECTION = {
             "pdu",
             "sequence",
@@ -53,8 +57,10 @@ public class SmsBroadcastUndelivered implements Runnable {
             "reference_number",
             "count",
             "address",
-            "_id"
+            "_id",
+            "sub_id"
     };
+    // MTK-END
 
     /** URI for raw table from SmsProvider. */
     private static final Uri sRawUri = Uri.withAppendedPath(Telephony.Sms.CONTENT_URI, "raw");
@@ -68,12 +74,8 @@ public class SmsBroadcastUndelivered implements Runnable {
     /** Handler for 3GPP2-format messages (may be null). */
     private final CdmaInboundSmsHandler mCdmaInboundSmsHandler;
 
-    /** Use context get bool config resource from framework. */
-    private final Context mContext;
-
     public SmsBroadcastUndelivered(Context context, GsmInboundSmsHandler gsmInboundSmsHandler,
             CdmaInboundSmsHandler cdmaInboundSmsHandler) {
-        mContext = context;
         mResolver = context.getContentResolver();
         mGsmInboundSmsHandler = gsmInboundSmsHandler;
         mCdmaInboundSmsHandler = cdmaInboundSmsHandler;
@@ -124,15 +126,10 @@ public class SmsBroadcastUndelivered implements Runnable {
                 } else {
                     SmsReferenceKey reference = new SmsReferenceKey(tracker);
                     Integer receivedCount = multiPartReceivedCount.get(reference);
-                    // get partial segment expire age from resource which in config.xml
-                    // Add this function for international roaming requirement.
-                    String expireAgeString = mContext.getResources().getString(
-                            com.android.internal.R.string.config_partial_segment_expire_age);
-                    long expireAge = Long.valueOf(expireAgeString);
                     if (receivedCount == null) {
                         multiPartReceivedCount.put(reference, 1);    // first segment seen
                         if (tracker.getTimestamp() <
-                                (System.currentTimeMillis() - expireAge)) {
+                                (System.currentTimeMillis() - PARTIAL_SEGMENT_EXPIRE_AGE)) {
                             // older than 30 days; delete if we don't find all the segments
                             oldMultiPartMessages.add(reference);
                         }
@@ -197,30 +194,44 @@ public class SmsBroadcastUndelivered implements Runnable {
         final String mAddress;
         final int mReferenceNumber;
         final int mMessageCount;
+        // MTK-START
+        final int mSubId;
+        // MTK-END
 
         SmsReferenceKey(InboundSmsTracker tracker) {
             mAddress = tracker.getAddress();
             mReferenceNumber = tracker.getReferenceNumber();
             mMessageCount = tracker.getMessageCount();
+            // MTK-START
+            mSubId = tracker.getSubId();
+            // MTK-END
         }
 
         String[] getDeleteWhereArgs() {
+            // MTK-START
             return new String[]{mAddress, Integer.toString(mReferenceNumber),
-                    Integer.toString(mMessageCount)};
+                    Integer.toString(mMessageCount), Integer.toString(mSubId)};
+            // MTK-END
         }
 
         @Override
         public int hashCode() {
-            return ((mReferenceNumber * 31) + mMessageCount) * 31 + mAddress.hashCode();
+            // MTK-START
+            return ((((int) mSubId * 63) + mReferenceNumber * 31) + mMessageCount) * 31 +
+                    mAddress.hashCode();
+            // MTK-END
         }
 
         @Override
         public boolean equals(Object o) {
             if (o instanceof SmsReferenceKey) {
                 SmsReferenceKey other = (SmsReferenceKey) o;
+                // MTK-START
                 return other.mAddress.equals(mAddress)
                         && (other.mReferenceNumber == mReferenceNumber)
-                        && (other.mMessageCount == mMessageCount);
+                        && (other.mMessageCount == mMessageCount)
+                        && (other.mSubId == mSubId);
+                // MTK-END
             }
             return false;
         }

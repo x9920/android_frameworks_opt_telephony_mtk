@@ -80,9 +80,8 @@ public class Sms7BitEncodingTranslator {
                 (mTranslationTableGSM != null && mTranslationTableGSM.size() > 0) ||
                 (mTranslationTableCDMA != null && mTranslationTableCDMA.size() > 0)) {
             char[] output = new char[size];
-            boolean isCdmaFormat = useCdmaFormatForMoSms();
             for (int i = 0; i < size; i++) {
-                output[i] = translateIfNeeded(message.charAt(i), isCdmaFormat);
+                output[i] = translateIfNeeded(message.charAt(i));
             }
 
             return String.valueOf(output);
@@ -102,8 +101,8 @@ public class Sms7BitEncodingTranslator {
      *         space, if no mapping is found in the translation table for such
      *         character
      */
-    private static char translateIfNeeded(char c, boolean isCdmaFormat) {
-        if (noTranslationNeeded(c, isCdmaFormat)) {
+    private static char translateIfNeeded(char c) {
+        if (noTranslationNeeded(c)) {
             if (DBG) {
                 Rlog.v(TAG, "No translation needed for " + Integer.toHexString(c));
             }
@@ -124,7 +123,7 @@ public class Sms7BitEncodingTranslator {
         }
 
         if (translation == -1) {
-            if (isCdmaFormat) {
+            if (useCdmaFormatForMoSms()) {
                 if (mTranslationTableCDMA != null) {
                     translation = mTranslationTableCDMA.get(c, -1);
                 }
@@ -150,8 +149,8 @@ public class Sms7BitEncodingTranslator {
         }
     }
 
-    private static boolean noTranslationNeeded(char c, boolean isCdmaFormat) {
-        if (isCdmaFormat) {
+    private static boolean noTranslationNeeded(char c) {
+        if (useCdmaFormatForMoSms()) {
             return GsmAlphabet.isGsmSeptets(c) && UserData.charToAscii.get(c, -1) != -1;
         }
         else {

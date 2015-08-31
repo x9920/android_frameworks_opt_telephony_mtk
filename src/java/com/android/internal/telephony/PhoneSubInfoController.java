@@ -20,8 +20,9 @@ package com.android.internal.telephony;
 
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.telephony.Rlog;
+import android.os.Message;
 import android.telephony.SubscriptionManager;
+import android.telephony.Rlog;
 import android.telephony.TelephonyManager;
 
 import java.lang.NullPointerException;
@@ -42,27 +43,17 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
         }
     }
 
-    // Use first phoneId to return unique value always
+
     public String getDeviceId() {
-        return getDeviceIdForPhone(PhoneConstants.PHONE_ID1);
+        return getDeviceIdForSubscriber(getDefaultSubscription());
     }
 
-    public String getDeviceIdForPhone(int phoneId) {
-        Phone phone = getPhone(phoneId);
-        if (phone != null) {
-            return phone.getDeviceId();
-        } else {
-            Rlog.e(TAG,"getDeviceIdForPhone phone " + phoneId + " is null");
-            return null;
-        }
-    }
-
-    public String getNaiForSubscriber(int subId) {
+    public String getDeviceIdForSubscriber(int subId) {
         PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(subId);
         if (phoneSubInfoProxy != null) {
-            return phoneSubInfoProxy.getNai();
+            return phoneSubInfoProxy.getDeviceId();
         } else {
-            Rlog.e(TAG,"getNai phoneSubInfoProxy is null" +
+            Rlog.e(TAG,"getDeviceId phoneSubInfoProxy is null" +
                       " for Subscription:" + subId);
             return null;
         }
@@ -80,15 +71,16 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     }
 
     public String getDeviceSvn() {
-        return getDeviceSvnUsingSubId(getFirstPhoneSubId());
+        return getDeviceSvnForSubscriber(getDefaultSubscription());
     }
 
-    public String getDeviceSvnUsingSubId(int subId) {
+    public String getDeviceSvnForSubscriber(int subId) {
         PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(subId);
         if (phoneSubInfoProxy != null) {
             return phoneSubInfoProxy.getDeviceSvn();
         } else {
-            Rlog.e(TAG,"getDeviceSvn phoneSubInfoProxy is null");
+            Rlog.e(TAG,"getDeviceSvn phoneSubInfoProxy is null" +
+                      " for Subscription:" + subId);
             return null;
         }
     }
@@ -172,7 +164,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     }
 
     public String getVoiceMailNumber() {
-        return getVoiceMailNumberForSubscriber(getDefaultVoiceSubId());
+        return getVoiceMailNumberForSubscriber(getDefaultSubscription());
     }
 
     public String getVoiceMailNumberForSubscriber(int subId) {
@@ -187,7 +179,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     }
 
     public String getCompleteVoiceMailNumber() {
-        return getCompleteVoiceMailNumberForSubscriber(getDefaultVoiceSubId());
+        return getCompleteVoiceMailNumberForSubscriber(getDefaultSubscription());
     }
 
     public String getCompleteVoiceMailNumberForSubscriber(int subId) {
@@ -202,7 +194,7 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     }
 
     public String getVoiceMailAlphaTag() {
-        return getVoiceMailAlphaTagForSubscriber(getDefaultVoiceSubId());
+        return getVoiceMailAlphaTagForSubscriber(getDefaultSubscription());
     }
 
     public String getVoiceMailAlphaTagForSubscriber(int subId) {
@@ -222,36 +214,27 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
     private PhoneSubInfoProxy getPhoneSubInfoProxy(int subId) {
 
         int phoneId = SubscriptionManager.getPhoneId(subId);
+        if (phoneId < 0 || phoneId >= TelephonyManager.getDefault().getPhoneCount()) {
+            phoneId = 0;
+        }
 
         try {
-            return getPhone(phoneId).getPhoneSubInfoProxy();
+            return ((PhoneProxy)mPhone[(int)phoneId]).getPhoneSubInfoProxy();
         } catch (NullPointerException e) {
+            Rlog.e(TAG, "Exception is :" + e.toString() + " For subId :" + subId);
+            e.printStackTrace();
+            return null;
+        } catch (ArrayIndexOutOfBoundsException e) {
             Rlog.e(TAG, "Exception is :" + e.toString() + " For subId :" + subId);
             e.printStackTrace();
             return null;
         }
     }
 
-    private PhoneProxy getPhone(int phoneId) {
-        if (phoneId < 0 || phoneId >= TelephonyManager.getDefault().getPhoneCount()) {
-            phoneId = 0;
-        }
-        return (PhoneProxy) mPhone[phoneId];
-    }
-
     private int getDefaultSubscription() {
-        return  SubscriptionController.getInstance().getDefaultSubId();
+        return  PhoneFactory.getDefaultSubscription();
     }
 
-    private int getDefaultVoiceSubId() {
-        return  SubscriptionController.getInstance().getDefaultVoiceSubId();
-    }
-
-    private int getFirstPhoneSubId() {
-        // get subId from first Phone/slot Id(i.e 0)
-        int[] subId = SubscriptionController.getInstance().getSubId(PhoneConstants.PHONE_ID1);
-        return  subId[0];
-    }
 
     public String getIsimImpi() {
         PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
@@ -303,4 +286,51 @@ public class PhoneSubInfoController extends IPhoneSubInfo.Stub {
              return null;
          }
      }
+
+    // ISIM - GBA related support START
+    public String getIsimGbabp() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getIsimGbabp();
+    }
+
+    public void setIsimGbabp(String gbabp, Message onComplete) {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        phoneSubInfoProxy.setIsimGbabp(gbabp, onComplete);
+    }
+
+    public boolean getUsimService(int service) {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getUsimService(service);
+    }
+
+    public String getUsimGbabp() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getUsimGbabp();
+    }
+
+    public void setUsimGbabp(String gbabp, Message onComplete) {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        phoneSubInfoProxy.setUsimGbabp(gbabp, onComplete);
+    }
+    // ISIM - GBA related support END
+
+    public byte[] getIsimPsismsc() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getIsimPsismsc();
+    }
+
+    public byte[] getUsimPsismsc() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getUsimPsismsc();
+    }
+
+    public byte[] getUsimSmsp() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getUsimSmsp();
+    }
+
+    public int getMncLength() {
+        PhoneSubInfoProxy phoneSubInfoProxy = getPhoneSubInfoProxy(getDefaultSubscription());
+        return phoneSubInfoProxy.getMncLength();
+    }
 }

@@ -16,12 +16,9 @@
 
 package com.android.internal.telephony;
 
-import android.telecom.ConferenceParticipant;
-
 import java.util.ArrayList;
 import java.util.List;
 
-import android.os.Bundle;
 import android.telephony.Rlog;
 
 /**
@@ -45,19 +42,6 @@ public abstract class Call {
 
         public boolean isDialing() {
             return this == DIALING || this == ALERTING;
-        }
-    }
-
-    public static State
-    stateFromDCState (DriverCall.State dcState) {
-        switch (dcState) {
-            case ACTIVE:        return State.ACTIVE;
-            case HOLDING:       return State.HOLDING;
-            case DIALING:       return State.DIALING;
-            case ALERTING:      return State.ALERTING;
-            case INCOMING:      return State.INCOMING;
-            case WAITING:       return State.WAITING;
-            default:            throw new RuntimeException ("illegal call state:" + dcState);
         }
     }
 
@@ -90,6 +74,15 @@ public abstract class Call {
     public abstract boolean isMultiparty();
     public abstract void hangup() throws CallStateException;
 
+    /**
+     * hangup call by given cause
+     *
+     * @param discRingingCallCause a disconnect cause
+     * @internal
+     */
+    public void hangup(int discRingingCallCause) throws CallStateException {
+        //just add default implementation
+    }
 
     /**
      * hasConnection
@@ -121,24 +114,6 @@ public abstract class Call {
      */
     public State getState() {
         return mState;
-    }
-
-    /**
-    * getExtras
-    * @return Call Extras. Subclasses of Call that support call extras need
-    *         to override this method to return the extras.
-    */
-    public Bundle getExtras() {
-        return null;
-    }
-
-    /**
-     * getConferenceParticipants
-     * @return List of conference participants. Expected to be overwritten
-     *         by subclasses.
-     */
-    public List<ConferenceParticipant> getConferenceParticipants() {
-        return null;
     }
 
     /**

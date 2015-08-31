@@ -16,18 +16,14 @@
 
 package com.android.internal.telephony.imsphone;
 
-import android.os.Bundle;
-import android.telecom.ConferenceParticipant;
 import android.telephony.Rlog;
 import android.telephony.DisconnectCause;
 
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.Phone;
 import com.android.ims.ImsCall;
-import com.android.ims.ImsCallProfile;
 import com.android.ims.ImsException;
 import com.android.ims.ImsStreamMediaProfile;
 
@@ -40,7 +36,6 @@ public class ImsPhoneCall extends Call {
     /*************************** Instance Variables **************************/
 
     private static final String LOG_TAG = "ImsPhoneCall";
-    private static final boolean DBG = false;
 
     /*package*/ ImsPhoneCallTracker mOwner;
 
@@ -87,12 +82,7 @@ public class ImsPhoneCall extends Call {
     @Override
     public boolean
     isMultiparty() {
-        ImsCall imsCall = getImsCall();
-        if (imsCall == null) {
-            return false;
-        }
-
-        return imsCall.isMultiparty();
+        return mConnections.size() > 1;
     }
 
     /** Please note: if this is the foreground call and a
@@ -108,33 +98,6 @@ public class ImsPhoneCall extends Call {
     public String
     toString() {
         return mState.toString();
-    }
-
-    @Override
-    public Bundle getExtras() {
-        Bundle imsCallExtras = null;
-        ImsCall call = getImsCall();
-        ImsCallProfile callProfile;
-
-        if (call != null) {
-            callProfile = call.getCallProfile();
-            if (callProfile != null) {
-                imsCallExtras = callProfile.mCallExtras;
-            }
-        }
-        if (imsCallExtras == null) {
-            if (DBG) Rlog.d(LOG_TAG, "ImsCall extras are null.");
-        }
-        return imsCallExtras;
-    }
-
-    @Override
-    public List<ConferenceParticipant> getConferenceParticipants() {
-         ImsCall call = getImsCall();
-         if (call == null) {
-             return null;
-         }
-         return call.getConferenceParticipants();
     }
 
     //***** Called from ImsPhoneConnection
@@ -185,7 +148,10 @@ public class ImsPhoneCall extends Call {
     /*package*/ void
     detach(ImsPhoneConnection conn) {
         mConnections.remove(conn);
-        clearDisconnected();
+
+        if (mConnections.size() == 0) {
+            mState = State.IDLE;
+        }
     }
 
     /**
@@ -232,14 +198,7 @@ public class ImsPhoneCall extends Call {
     getFirstConnection() {
         if (mConnections.size() == 0) return null;
 
-        for (int i = mConnections.size() - 1 ; i >= 0 ; i--) {
-            ImsPhoneConnection cn = (ImsPhoneConnection)mConnections.get(i);
-            if (cn.getState().isAlive()) {
-                return (ImsPhoneConnection) mConnections.get(i);
-            }
-        }
-
-        return null;
+        return (ImsPhoneConnection) mConnections.get(0);
     }
 
     /*package*/ void
@@ -256,33 +215,15 @@ public class ImsPhoneCall extends Call {
     }
 
     /* package */ void
-    merge(ImsPhoneCall that, State state, long oldConnectTime) {
-        if (getFirstConnection() != null) {
-           getFirstConnection().setConnectTime(oldConnectTime);
-        }
+    merge(ImsPhoneCall that, State state) {
         ImsPhoneConnection[] cc = that.mConnections.toArray(
                 new ImsPhoneConnection[that.mConnections.size()]);
         for (ImsPhoneConnection c : cc) {
-            // Scenario - A calls B,A calls C,B-Hold, C-Active, Merge
-            // Merge success but only C is added to conference
-            // B is on Hold
-            // UI should display both calls.i.e.Conf call & held call
-            // Avoid overwritting conference call state to held call
-            if (DBG) Rlog.d(LOG_TAG, "merge: " + that + "state = " + state);
+            c.update(null, state);
         }
     }
 
-    /**
-     * Retrieves the {@link ImsCall} for the current {@link ImsPhoneCall}.
-     * <p>
-     * Marked as {@code VisibleForTesting} so that the
-     * {@link com.android.internal.telephony.TelephonyTester} class can inject a test conference
-     * event package into a regular ongoing IMS call.
-     *
-     * @return The {@link ImsCall}.
-     */
-    @VisibleForTesting
-    public ImsCall
+    /*package*/ ImsCall
     getImsCall() {
         return (getFirstConnection() == null) ? null : getFirstConnection().getImsCall();
     }
@@ -333,7 +274,11 @@ public class ImsPhoneCall extends Call {
 
     /* package */ ImsPhoneConnection
     getHandoverConnection() {
-        return (ImsPhoneConnection) getEarliestConnection();
+        ImsPhoneConnection conn = (ImsPhoneConnection) getEarliestConnection();
+        if (conn != null) {
+            conn.setMultiparty(isMultiparty());
+        }
+        return conn;
     }
 
     void switchWith(ImsPhoneCall that) {

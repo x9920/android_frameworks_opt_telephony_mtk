@@ -17,9 +17,7 @@
 package com.android.internal.telephony;
 
 import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.os.AsyncResult;
@@ -28,8 +26,6 @@ import android.os.Message;
 import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.SystemClock;
-import android.os.SystemProperties;
-import android.os.UserHandle;
 import android.preference.PreferenceManager;
 import android.telephony.CellInfo;
 import android.telephony.ServiceState;
@@ -38,11 +34,8 @@ import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
-import android.util.NativeTextHelper;
 import android.util.Pair;
 import android.util.TimeUtils;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -72,6 +65,8 @@ public abstract class ServiceStateTracker extends Handler {
     protected PhoneBase mPhoneBase;
 
     protected boolean mVoiceCapable;
+    //[ALPS01803573] - for 4gds/3gds tablet project
+    protected boolean mSmsCapable;
 
     public ServiceState mSS = new ServiceState();
     protected ServiceState mNewSS = new ServiceState();
@@ -80,16 +75,12 @@ public abstract class ServiceStateTracker extends Handler {
     protected long mLastCellInfoListTime;
     protected List<CellInfo> mLastCellInfoList = null;
 
+    // M: Report CellInfo by rate was done by polling cell info from framework by rate
+    protected int mCellInfoRate = Integer.MAX_VALUE;
+
     // This is final as subclasses alias to a more specific type
     // so we don't want the reference to change.
     protected final CellInfo mCellInfo;
-
-    // PLMN/SPN data we last broadcasted
-    private int mCurSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
-    private String mCurPlmn;
-    private boolean mCurShowPlmn = false;
-    private String mCurSpn;
-    private boolean mCurShowSpn = false;
 
     protected SignalStrength mSignalStrength = new SignalStrength();
 
@@ -117,10 +108,8 @@ public abstract class ServiceStateTracker extends Handler {
      */
     protected boolean mDontPollSignalStrength = false;
 
-    protected RegistrantList mVoiceRoamingOnRegistrants = new RegistrantList();
-    protected RegistrantList mVoiceRoamingOffRegistrants = new RegistrantList();
-    protected RegistrantList mDataRoamingOnRegistrants = new RegistrantList();
-    protected RegistrantList mDataRoamingOffRegistrants = new RegistrantList();
+    protected RegistrantList mRoamingOnRegistrants = new RegistrantList();
+    protected RegistrantList mRoamingOffRegistrants = new RegistrantList();
     protected RegistrantList mAttachedRegistrants = new RegistrantList();
     protected RegistrantList mDetachedRegistrants = new RegistrantList();
     protected RegistrantList mDataRegStateOrRatChangedRegistrants = new RegistrantList();
@@ -132,11 +121,10 @@ public abstract class ServiceStateTracker extends Handler {
     protected boolean mPendingRadioPowerOffAfterDataOff = false;
     protected int mPendingRadioPowerOffAfterDataOffTag = 0;
 
-    /* Current rat is iwlan */
-    protected boolean mIwlanRatAvailable = false;
-
+    //MTK-START Replace 20 with 10
     /** Signal strength poll rate. */
-    protected static final int POLL_PERIOD_MILLIS = 20 * 1000;
+    protected static final int POLL_PERIOD_MILLIS = 10 * 1000;
+    //MTK-END Replace 20 with 10
 
     /** Waiting period before recheck gprs and voice registration. */
     public static final int DEFAULT_GPRS_CHECK_PERIOD_MILLIS = 60 * 1000;
@@ -186,8 +174,30 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final int EVENT_GET_CELL_INFO_LIST                = 43;
     protected static final int EVENT_UNSOL_CELL_INFO_LIST              = 44;
     protected static final int EVENT_CHANGE_IMS_STATE                  = 45;
-    protected static final int EVENT_IMS_STATE_CHANGED                 = 46;
-    protected static final int EVENT_IMS_STATE_DONE                    = 47;
+
+    /* M: MTK added events begin*/
+    protected static final int EVENT_DATA_CONNECTION_DETACHED = 100;
+    protected static final int EVENT_INVALID_SIM_INFO = 101; //ALPS00248788
+    protected static final int EVENT_PS_NETWORK_STATE_CHANGED = 102;
+    protected static final int EVENT_IMEI_LOCK = 103; /* ALPS00296298 */
+    protected static final int EVENT_DISABLE_EMMRRS_STATUS = 104;
+    protected static final int EVENT_ENABLE_EMMRRS_STATUS = 105;
+    protected static final int EVENT_ICC_REFRESH = 106;
+    protected static final int EVENT_FEMTO_CELL_INFO = 107;
+    protected static final int EVENT_GET_CELL_INFO_LIST_BY_RATE = 108;
+    protected static final int EVENT_SET_IMS_ENABLED_DONE = 109;
+    protected static final int EVENT_SET_IMS_DISABLE_DONE = 110;
+    protected static final int EVENT_IMS_DISABLED_URC = 111;
+    protected static final int EVENT_IMS_REGISTRATION_INFO = 112;
+    /* MTK added events end*/
+
+    /// M: c2k modify, event constants. @{
+    protected static final int EVENT_QUERY_NITZ_TIME        = 200;
+    protected static final int EVENT_GET_NITZ_TIME          = 201;
+    protected static final int EVENT_NETWORK_TYPE_CHANGED   = 202;
+    protected static final int EVENT_ETS_DEV_CHANGED        = 203;
+    protected static final int EVENT_SET_MDN_DONE           = 204;
+    /// @}
 
     protected static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
@@ -236,7 +246,6 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final String ACTION_RADIO_OFF = "android.intent.action.ACTION_RADIO_OFF";
     protected boolean mPowerOffDelayNeed = true;
     protected boolean mDeviceShuttingDown = false;
-    private boolean mImsRegistered = false;
 
     protected SubscriptionManager mSubscriptionManager;
     protected final OnSubscriptionsChangedListener mOnSubscriptionsChangedListener =
@@ -284,19 +293,15 @@ public abstract class ServiceStateTracker extends Handler {
         }
     };
 
-    private BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            updateSpnDisplay();
-        }
-    };
-
     protected ServiceStateTracker(PhoneBase phoneBase, CommandsInterface ci, CellInfo cellInfo) {
         mPhoneBase = phoneBase;
         mCellInfo = cellInfo;
         mCi = ci;
         mVoiceCapable = mPhoneBase.getContext().getResources().getBoolean(
                 com.android.internal.R.bool.config_voice_capable);
+        //[ALPS01803573] - for 4gds/3gds tablet project
+        mSmsCapable = mPhoneBase.getContext().getResources().getBoolean(
+                com.android.internal.R.bool.config_sms_capable);
         mUiccController = UiccController.getInstance();
         mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
         mCi.setOnSignalStrengthUpdate(this, EVENT_SIGNAL_STRENGTH_UPDATE, null);
@@ -305,13 +310,10 @@ public abstract class ServiceStateTracker extends Handler {
         mSubscriptionManager = SubscriptionManager.from(phoneBase.getContext());
         mSubscriptionManager
             .addOnSubscriptionsChangedListener(mOnSubscriptionsChangedListener);
-
-        mPhoneBase.getContext().registerReceiver(mReceiver,
-                new IntentFilter(Intent.ACTION_LOCALE_CHANGED));
+        // TODO: backport the locale receiver
 
         mPhoneBase.setSystemProperty(TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE,
             ServiceState.rilRadioTechnologyToString(ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN));
-        mCi.registerForImsNetworkStateChanged(this, EVENT_IMS_STATE_CHANGED, null);
     }
 
     void requestShutdown() {
@@ -327,20 +329,24 @@ public abstract class ServiceStateTracker extends Handler {
         mCi.unregisterForCellInfoList(this);
         mSubscriptionManager
             .removeOnSubscriptionsChangedListener(mOnSubscriptionsChangedListener);
-        mPhoneBase.getContext().unregisterReceiver(mReceiver);
     }
 
     public boolean getDesiredPowerState() {
         return mDesiredPowerState;
     }
 
-    private SignalStrength mLastSignalStrength = null;
+    protected SignalStrength mLastSignalStrength = null;
     protected boolean notifySignalStrength() {
         boolean notified = false;
         synchronized(mCellInfo) {
             if (!mSignalStrength.equals(mLastSignalStrength)) {
                 try {
+                    if (DBG) {
+                        log("notifySignalStrength: mSignalStrength.getLevel=" +
+                                mSignalStrength.getLevel());
+                    }
                     mPhoneBase.notifySignalStrength();
+                    mLastSignalStrength = new SignalStrength(mSignalStrength);
                     notified = true;
                 } catch (NullPointerException ex) {
                     loge("updateSignalStrength() Phone already destroyed: " + ex
@@ -370,13 +376,18 @@ public abstract class ServiceStateTracker extends Handler {
      * data only devices, to fix that use DataRegState.
      */
     protected void useDataRegStateForDataOnlyDevices() {
-        if (mVoiceCapable == false) {
+        //[ALPS01803573] - for 4gds/3gds tablet project
+        //if (mVoiceCapable == false) {
+        if (mSmsCapable == false) {
             if (DBG) {
                 log("useDataRegStateForDataOnlyDevice: VoiceRegState=" + mNewSS.getVoiceRegState()
                     + " DataRegState=" + mNewSS.getDataRegState());
             }
-            // TODO: Consider not lying and instead have callers know the difference. 
+            // TODO: Consider not lying and instead have callers know the difference.
             mNewSS.setVoiceRegState(mNewSS.getDataRegState());
+
+            /* Integrate ALPS00286197 with MR2 data only device state update */
+            mNewSS.setRegState(ServiceState.REGISTRATION_STATE_HOME_NETWORK);
         }
     }
 
@@ -388,87 +399,45 @@ public abstract class ServiceStateTracker extends Handler {
     }
 
     /**
-     * Registration point for combined roaming on of mobile voice
+     * Registration point for combined roaming on
      * combined roaming is true when roaming is true and ONS differs SPN
      *
      * @param h handler to notify
      * @param what what code of message when delivered
      * @param obj placed in Message.obj
      */
-    public void registerForVoiceRoamingOn(Handler h, int what, Object obj) {
+    public  void registerForRoamingOn(Handler h, int what, Object obj) {
         Registrant r = new Registrant(h, what, obj);
-        mVoiceRoamingOnRegistrants.add(r);
+        mRoamingOnRegistrants.add(r);
 
-        if (mSS.getVoiceRoaming()) {
+        if (mSS.getRoaming()) {
             r.notifyRegistrant();
         }
     }
 
-    public void unregisterForVoiceRoamingOn(Handler h) {
-        mVoiceRoamingOnRegistrants.remove(h);
+    public  void unregisterForRoamingOn(Handler h) {
+        mRoamingOnRegistrants.remove(h);
     }
 
     /**
-     * Registration point for roaming off of mobile voice
+     * Registration point for combined roaming off
      * combined roaming is true when roaming is true and ONS differs SPN
      *
      * @param h handler to notify
      * @param what what code of message when delivered
      * @param obj placed in Message.obj
      */
-    public void registerForVoiceRoamingOff(Handler h, int what, Object obj) {
+    public  void registerForRoamingOff(Handler h, int what, Object obj) {
         Registrant r = new Registrant(h, what, obj);
-        mVoiceRoamingOffRegistrants.add(r);
+        mRoamingOffRegistrants.add(r);
 
-        if (!mSS.getVoiceRoaming()) {
+        if (!mSS.getRoaming()) {
             r.notifyRegistrant();
         }
     }
 
-    public void unregisterForVoiceRoamingOff(Handler h) {
-        mVoiceRoamingOffRegistrants.remove(h);
-    }
-
-    /**
-     * Registration point for combined roaming on of mobile data
-     * combined roaming is true when roaming is true and ONS differs SPN
-     *
-     * @param h handler to notify
-     * @param what what code of message when delivered
-     * @param obj placed in Message.obj
-     */
-    public void registerForDataRoamingOn(Handler h, int what, Object obj) {
-        Registrant r = new Registrant(h, what, obj);
-        mDataRoamingOnRegistrants.add(r);
-
-        if (mSS.getDataRoaming()) {
-            r.notifyRegistrant();
-        }
-    }
-
-    public void unregisterForDataRoamingOn(Handler h) {
-        mDataRoamingOnRegistrants.remove(h);
-    }
-
-    /**
-     * Registration point for roaming off of mobile data
-     * combined roaming is true when roaming is true and ONS differs SPN
-     *
-     * @param h handler to notify
-     * @param what what code of message when delivered
-     * @param obj placed in Message.obj
-     */
-    public void registerForDataRoamingOff(Handler h, int what, Object obj) {
-        Registrant r = new Registrant(h, what, obj);
-        mDataRoamingOffRegistrants.add(r);
-
-        if (!mSS.getDataRoaming()) {
-            r.notifyRegistrant();
-        }
-    }
-
-    public void unregisterForDataRoamingOff(Handler h) {
-        mDataRoamingOffRegistrants.remove(h);
+    public  void unregisterForRoamingOff(Handler h) {
+        mRoamingOffRegistrants.remove(h);
     }
 
     /**
@@ -553,6 +522,8 @@ public abstract class ServiceStateTracker extends Handler {
                 onUpdateIccAvailability();
                 break;
 
+            /* MR2 newly added event handling START */
+            case EVENT_GET_CELL_INFO_LIST_BY_RATE:
             case EVENT_GET_CELL_INFO_LIST: {
                 AsyncResult ar = (AsyncResult) msg.obj;
                 CellInfoResult result = (CellInfoResult) ar.userObj;
@@ -563,14 +534,20 @@ public abstract class ServiceStateTracker extends Handler {
                     } else {
                         result.list = (List<CellInfo>) ar.result;
 
-                        if (VDBG) {
+                        if (DBG) {
                             log("EVENT_GET_CELL_INFO_LIST: size=" + result.list.size()
                                     + " list=" + result.list);
                         }
                     }
                     mLastCellInfoListTime = SystemClock.elapsedRealtime();
                     mLastCellInfoList = result.list;
+                    if (msg.what == EVENT_GET_CELL_INFO_LIST_BY_RATE) {
+                        log("EVENT_GET_CELL_INFO_LIST_BY_RATE notify result");
+                        mPhoneBase.notifyCellInfo(result.list);
+                    } else {
                     result.lockObj.notify();
+                        log("EVENT_GET_CELL_INFO_LIST notify result");
+                    }
                 }
                 break;
             }
@@ -592,18 +569,6 @@ public abstract class ServiceStateTracker extends Handler {
                 break;
             }
 
-            case  EVENT_IMS_STATE_CHANGED: // received unsol
-                mCi.getImsRegistrationState(this.obtainMessage(EVENT_IMS_STATE_DONE));
-                break;
-
-            case EVENT_IMS_STATE_DONE:
-                AsyncResult ar = (AsyncResult) msg.obj;
-                if (ar.exception == null) {
-                    int[] responseArray = (int[])ar.result;
-                    mImsRegistered = (responseArray[0] == 1) ? true : false;
-                }
-                break;
-
             default:
                 log("Unhandled message with number: " + msg.what);
                 break;
@@ -623,6 +588,7 @@ public abstract class ServiceStateTracker extends Handler {
 
     public abstract void setImsRegistrationState(boolean registered);
     public abstract void pollState();
+    public void refreshSpnDisplay() {}
 
     /**
      * Registration point for transition into DataConnection attached.
@@ -772,8 +738,8 @@ public abstract class ServiceStateTracker extends Handler {
                     Message msg = Message.obtain(this);
                     msg.what = EVENT_SET_RADIO_POWER_OFF;
                     msg.arg1 = ++mPendingRadioPowerOffAfterDataOffTag;
-                    if (sendMessageDelayed(msg, 30000)) {
-                        if (DBG) log("Wait upto 30s for data to disconnect, then turn off radio.");
+                    if (sendMessageDelayed(msg, 5000)) {
+                        if (DBG) log("Wait upto 5s for data to disconnect, then turn off radio.");
                         mPendingRadioPowerOffAfterDataOff = true;
                     } else {
                         log("Cannot send delayed Msg, turn off radio right away.");
@@ -811,6 +777,11 @@ public abstract class ServiceStateTracker extends Handler {
     protected boolean onSignalStrengthResult(AsyncResult ar, boolean isGsm) {
         SignalStrength oldSignalStrength = mSignalStrength;
 
+        if ((DBG) && (mLastSignalStrength != null)) {
+            log("onSignalStrengthResult():  LastSignalStrength=" +
+                    mLastSignalStrength.toString());
+        }
+
         // This signal is used for both voice and data radio signal so parse
         // all fields
 
@@ -818,6 +789,7 @@ public abstract class ServiceStateTracker extends Handler {
             mSignalStrength = (SignalStrength) ar.result;
             mSignalStrength.validateInput();
             mSignalStrength.setGsm(isGsm);
+            if (DBG) log("onSignalStrengthResult():new mSignalStrength=" + mSignalStrength.toString());
         } else {
             log("onSignalStrengthResult() Exception from RIL : " + ar.exception);
             mSignalStrength = new SignalStrength(isGsm);
@@ -895,7 +867,7 @@ public abstract class ServiceStateTracker extends Handler {
     }
 
     public String getSystemProperty(String property, String defValue) {
-        return TelephonyManager.getTelephonyProperty(mPhoneBase.getPhoneId(), property, defValue);
+        return TelephonyManager.getTelephonyProperty(property, mPhoneBase.getSubId(), defValue);
     }
 
     /**
@@ -903,7 +875,7 @@ public abstract class ServiceStateTracker extends Handler {
      */
     public List<CellInfo> getAllCellInfo() {
         CellInfoResult result = new CellInfoResult();
-        if (VDBG) log("SST.getAllCellInfo(): E");
+        if (DBG) log("SST.getAllCellInfo(): E");
         int ver = mCi.getRilVersion();
         if (ver >= 8) {
             if (isCallerOnDifferentThread()) {
@@ -943,6 +915,61 @@ public abstract class ServiceStateTracker extends Handler {
         }
     }
 
+    //M: MTK START
+    protected List<CellInfo> getAllCellInfoByRate() {
+        CellInfoResult result = new CellInfoResult();
+        if (DBG) log("SST.getAllCellInfoByRate(): enter");
+
+        int ver = mCi.getRilVersion();
+
+        if (ver >= 8) {
+            if (isCallerOnDifferentThread()) {
+                if ((SystemClock.elapsedRealtime() - mLastCellInfoListTime)
+                        > LAST_CELL_INFO_LIST_MAX_AGE_MS) {
+                    Message msg = obtainMessage(EVENT_GET_CELL_INFO_LIST_BY_RATE, result);
+                    synchronized (result.lockObj) {
+                        mCi.getCellInfoList(msg);
+                        try {
+                            result.lockObj.wait();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                            result.list = null;
+                        }
+                    }
+                } else {
+                    if (DBG) log("SST.getAllCellInfo(): return last, back to back calls");
+                    result.list = mLastCellInfoList;
+                }
+            } else {
+                if (DBG) log("SST.getAllCellInfo(): return last, same thread can't block");
+                result.list = mLastCellInfoList;
+            }
+        } else {
+            if (DBG) log("SST.getAllCellInfo(): not implemented");
+            result.list = null;
+        }
+        if (DBG) {
+            if (result.list != null) {
+                log("SST.getAllCellInfo(): X size=" + result.list.size()
+                        + " list=" + result.list);
+            } else {
+                log("SST.getAllCellInfo(): X size=0 list=null");
+            }
+        }
+        return result.list;
+    }
+
+    public void setCellInfoRate(int rateInMillis) {
+        log("SST.setCellInfoRate()");
+        mCellInfoRate = rateInMillis;
+        updateCellInfoRate();
+    }
+
+    protected void updateCellInfoRate() {
+        log("SST.updateCellInfoRate()");
+    }
+    // M: MTK END
+
     /**
      * @return signal strength
      */
@@ -957,23 +984,15 @@ public abstract class ServiceStateTracker extends Handler {
         pw.println(" mSS=" + mSS);
         pw.println(" mNewSS=" + mNewSS);
         pw.println(" mCellInfo=" + mCellInfo);
+        pw.println(" mSignalStrength=" + mSignalStrength);
         pw.println(" mRestrictedState=" + mRestrictedState);
         pw.println(" mPollingContext=" + mPollingContext);
         pw.println(" mDesiredPowerState=" + mDesiredPowerState);
         pw.println(" mDontPollSignalStrength=" + mDontPollSignalStrength);
         pw.println(" mPendingRadioPowerOffAfterDataOff=" + mPendingRadioPowerOffAfterDataOff);
         pw.println(" mPendingRadioPowerOffAfterDataOffTag=" + mPendingRadioPowerOffAfterDataOffTag);
-        pw.println(" mCurSubId=" + mCurSubId);
-        pw.println(" mCurSpn=" + mCurSpn);
-        pw.println(" mCurShowSpn=" + mCurShowSpn);
-        pw.println(" mCurPlmn=" + mCurPlmn);
-        pw.println(" mCurShowPlmn=" + mCurShowPlmn);
-        pw.flush();
     }
 
-    public boolean isImsRegistered() {
-        return mImsRegistered;
-    }
     /**
      * Verifies the current thread is the same as the thread originally
      * used in the initialization of this instance. Throws RuntimeException
@@ -1002,177 +1021,5 @@ public abstract class ServiceStateTracker extends Handler {
             log("update mccmnc=" + newOp + " fromServiceState=true");
             MccTable.updateMccMncConfiguration(context, newOp, true);
         }
-    }
-
-    protected boolean isIwlanFeatureAvailable() {
-        boolean iwlanAvailable = mPhoneBase.getContext().getResources()
-                .getBoolean(com.android.internal.R.bool.config_feature_iwlan_enabled);
-        log("Iwlan feature available = " + iwlanAvailable);
-        return iwlanAvailable;
-    }
-
-    /* Consider the below usecase.
-     * 1. WQE and IWLAN features are enabled and hence device can have wifi and mobile
-     * connectivity simultaneously.
-     * 2. Current available RATs are WWAN and IWLAN, both co-exists.
-     * 3. RIL informs preferred RAT as WWAN. Telephony could have default and
-     * non-default PDP activated. Since IWLAN is also available, non-default pdp
-     * would be over IWLAN.
-     * 4. WWAN goes to OOS.
-     * 5. RIL informs that default PDP is lost(unsol_data_call_list).
-     * 6. Telephony attempts to retry the default APN context.
-     * 7. RIL informs current preferred RAT is IWLAN.
-     * 8. Telephony marks default/ia APN as "not available".
-     * 9. Upon retry timer expiration, telephony does not bringup default APN
-     * since is marked as unavailable. DC object moved to IDLE state.
-     * 10 Later WWAN gets back in service.
-     * 11. RIL informs preferred RAT as WWAN. So the RAT transition was as
-     * follow.
-     * IWLAN(Attached) -> WWAN(Attached)
-     * 12. There is no trigger for telephony to initiate data call on
-     * connnectable ApnContext after WWAN gets in service.
-     * 13 Below method detects the transition from IWLAN to WWAN in attached
-     * state and informs telephony that we are in WWAN attached state.
-     * 14. Telephony would look into all the connectable APNs are would trigger
-     * data call based on prevailing conditions.
-     *
-     */
-    protected void processIwlanToWwanTransition(ServiceState ss) {
-        // Wifi connected(iwlan feature on) AND a valid(non-wlan) RAT present
-        // AND attached AND previous RAT was iwlan.
-        //
-        // Notify that we are attached so that we can setup connectable
-        // APNs.
-        if (isIwlanFeatureAvailable() &&
-                (ss.getRilDataRadioTechnology()
-                 != ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN) &&
-                (ss.getRilDataRadioTechnology()
-                 != ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN) &&
-                (ss.getDataRegState() == ServiceState.STATE_IN_SERVICE) &&
-                (mIwlanRatAvailable == true)) {
-
-            log("pollStateDone: Wifi connected and moved out of iwlan " +
-                    "and wwan is attached.");
-            mAttachedRegistrants.notifyRegistrants();
-        }
-
-    }
-
-
-    /* Reset Service state when IWLAN is enabled as polling in airplane mode
-     * causes state to go to OUT_OF_SERVICE state instead of STATE_OFF
-     */
-    protected void resetServiceStateInIwlanMode() {
-        if (mCi.getRadioState() == CommandsInterface.RadioState.RADIO_OFF) {
-            boolean resetIwlanRatVal = false;
-            log("set service state as POWER_OFF");
-            if (isIwlanFeatureAvailable()
-                    && (ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN
-                        == mNewSS.getRilDataRadioTechnology())) {
-                log("pollStateDone: mNewSS = " + mNewSS);
-                log("pollStateDone: reset iwlan RAT value");
-                resetIwlanRatVal = true;
-            }
-            mNewSS.setStateOff();
-            if (resetIwlanRatVal) {
-                mNewSS.setRilDataRadioTechnology(ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN);
-                mNewSS.setDataRegState(ServiceState.STATE_IN_SERVICE);
-                log("pollStateDone: mNewSS = " + mNewSS);
-                resetIwlanRatVal = false;
-            }
-        }
-    }
-
-    /**
-     * Check ISO country by MCC to see if phone is roaming in same registered country
-     */
-    protected boolean inSameCountry(String operatorNumeric) {
-        if (TextUtils.isEmpty(operatorNumeric) || (operatorNumeric.length() < 5)) {
-            // Not a valid network
-            return false;
-        }
-        final String homeNumeric = getHomeOperatorNumeric();
-        if (TextUtils.isEmpty(homeNumeric) || (homeNumeric.length() < 5)) {
-            // Not a valid SIM MCC
-            return false;
-        }
-        boolean inSameCountry = true;
-        final String networkMCC = operatorNumeric.substring(0, 3);
-        final String homeMCC = homeNumeric.substring(0, 3);
-        final String networkCountry = MccTable.countryCodeForMcc(Integer.parseInt(networkMCC));
-        final String homeCountry = MccTable.countryCodeForMcc(Integer.parseInt(homeMCC));
-        if (networkCountry.isEmpty() || homeCountry.isEmpty()) {
-            // Not a valid country
-            return false;
-        }
-        inSameCountry = homeCountry.equals(networkCountry);
-        if (inSameCountry) {
-            return inSameCountry;
-        }
-        // special same country cases
-        if ("us".equals(homeCountry) && "vi".equals(networkCountry)) {
-            inSameCountry = true;
-        } else if ("vi".equals(homeCountry) && "us".equals(networkCountry)) {
-            inSameCountry = true;
-        }
-        return inSameCountry;
-    }
-
-    protected abstract void setRoamingType(ServiceState currentServiceState);
-
-    protected String getHomeOperatorNumeric() {
-        final Context context = mPhoneBase.getContext();
-        final TelephonyManager tm =
-                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
-        return tm.getSimOperatorNumericForPhone(mPhoneBase.getPhoneId());
-    }
-
-    protected int getPhoneId() {
-        return mPhoneBase.getPhoneId();
-    }
-
-    private String adaptCarrierNameToLocale(Context context, String name) {
-        return NativeTextHelper.getLocalString(context, name,
-                com.android.internal.R.array.origin_carrier_names,
-                com.android.internal.R.array.locale_carrier_names);
-    }
-
-    protected void sendSpnStringsBroadcastIfNeeded(String plmn, boolean showPlmn,
-            String spn, boolean showSpn) {
-        final Context context = mPhoneBase.getContext();
-        final int phoneId = mPhoneBase.getPhoneId();
-        final int subId = mPhoneBase.getSubId();
-
-        if (context.getResources().getBoolean(
-                    com.android.internal.R.bool.config_monitor_locale_change)) {
-            plmn = adaptCarrierNameToLocale(context, plmn);
-            spn = adaptCarrierNameToLocale(context, spn);
-        }
-
-        if (subId != mCurSubId
-                || showPlmn != mCurShowPlmn
-                || showSpn != mCurShowSpn
-                || !TextUtils.equals(spn, mCurSpn)
-                || !TextUtils.equals(plmn, mCurPlmn)) {
-            if (DBG) {
-                log(String.format("sendSpnStringsBroadcast:" +
-                        " showPlmn='%b' plmn='%s' showSpn='%b' spn='%s' for sub %d",
-                        showPlmn, plmn, showSpn, spn, subId));
-            }
-            Intent intent = new Intent(TelephonyIntents.SPN_STRINGS_UPDATED_ACTION);
-            intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
-            intent.putExtra(TelephonyIntents.EXTRA_SHOW_SPN, showSpn);
-            intent.putExtra(TelephonyIntents.EXTRA_SPN, spn);
-            intent.putExtra(TelephonyIntents.EXTRA_SHOW_PLMN, showPlmn);
-            intent.putExtra(TelephonyIntents.EXTRA_PLMN, plmn);
-            SubscriptionManager.putPhoneIdAndSubIdExtra(intent, phoneId, subId);
-            mPhoneBase.getContext().sendStickyBroadcastAsUser(intent, UserHandle.ALL);
-        }
-
-        mCurShowSpn = showSpn;
-        mCurShowPlmn = showPlmn;
-        mCurSpn = spn;
-        mCurPlmn = plmn;
-        mCurSubId = subId;
     }
 }

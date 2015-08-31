@@ -26,6 +26,15 @@ import android.net.NetworkCapabilities;
 import android.net.ProxyInfo;
 import android.os.Message;
 
+import java.util.ArrayList;
+import java.util.Collection;
+
+//VoLTE
+import com.mediatek.internal.telephony.DedicateBearerProperties;
+import com.mediatek.internal.telephony.PcscfInfo;
+import com.android.internal.telephony.dataconnection.DcFailCause;
+import com.mediatek.internal.telephony.DefaultBearerConfig;
+
 /**
  * AsyncChannel to a DataConnection
  */
@@ -59,7 +68,22 @@ public class DcAsyncChannel extends AsyncChannel {
     public static final int REQ_RESET = BASE + 12;
     public static final int RSP_RESET = BASE + 13;
 
-    private static final int CMD_TO_STRING_COUNT = RSP_RESET - BASE + 1;
+public static final int REQ_IS_ACTIVE = BASE + 14;
+    public static final int RSP_IS_ACTIVE = BASE + 15;
+
+    //VoLTE
+    public static final int REQ_GET_CONCATENATED_PROPERTIES = BASE + 30;
+    public static final int RSP_GET_CONCATENATED_PROPERTIES = BASE + 31;
+    public static final int REQ_GET_PCSCF = BASE + 32;
+    public static final int RSP_GET_PCSCF = BASE + 33;
+    public static final int REQ_GET_DEFAULT_BEARER_PROPERTIES = BASE + 34;
+    public static final int RSP_GET_DEFAULT_BEARER_PROPERTIES = BASE + 35;
+    public static final int REQ_GET_DEFAULT_BEARER_DEACTIVATE_CID_ARRAY = BASE + 36;
+    public static final int RSP_GET_DEFAULT_BEARER_DEACTIVATE_CID_ARRAY = BASE + 37;
+    public static final int REQ_GET_LAST_DATA_CONN_FAIL_CAUSE = BASE + 38;
+    public static final int RSP_GET_LAST_DATA_CONN_FAIL_CAUSE = BASE + 39;
+
+    private static final int CMD_TO_STRING_COUNT = RSP_IS_ACTIVE - BASE + 1;
     private static String[] sCmdToString = new String[CMD_TO_STRING_COUNT];
     static {
         sCmdToString[REQ_IS_INACTIVE - BASE] = "REQ_IS_INACTIVE";
@@ -78,6 +102,8 @@ public class DcAsyncChannel extends AsyncChannel {
         sCmdToString[RSP_GET_NETWORK_CAPABILITIES - BASE] = "RSP_GET_NETWORK_CAPABILITIES";
         sCmdToString[REQ_RESET - BASE] = "REQ_RESET";
         sCmdToString[RSP_RESET - BASE] = "RSP_RESET";
+        sCmdToString[REQ_IS_ACTIVE - BASE] = "REQ_IS_ACTIVE";
+        sCmdToString[RSP_IS_ACTIVE - BASE] = "RSP_IS_ACTIVE";        
     }
 
     // Convert cmd to string or null if unknown
@@ -378,6 +404,20 @@ public class DcAsyncChannel extends AsyncChannel {
                             rilRadioTechnology, retryWhenSSChange, onCompletedMsg));
     }
 
+    //VoLTE
+    public void bringUp(ApnContext apnContext, int initialMaxRetry, int profileId,
+            int rilRadioTechnology, DefaultBearerConfig defaultBearerConfig, boolean retryWhenSSChange, Message onCompletedMsg) {
+        if (DBG) {
+            log("bringUp: apnContext=" + apnContext + " initialMaxRetry=" + initialMaxRetry
+                + " DefaultBearerConfig: " + defaultBearerConfig + " onCompletedMsg=" + onCompletedMsg);
+        }
+        
+        sendMessage(DataConnection.EVENT_CONNECT,
+            new DataConnection.ConnectionParams(apnContext, initialMaxRetry, profileId,
+            rilRadioTechnology, defaultBearerConfig, retryWhenSSChange, onCompletedMsg));
+       
+    }
+
     /**
      * Tear down the connection through the apn on the network.
      *
@@ -432,5 +472,95 @@ public class DcAsyncChannel extends AsyncChannel {
 
     public String[] getPcscfAddr() {
         return mDc.mPcscfAddr;
+    }
+
+// M: for checking if the state is active or not
+    /**
+     * Request if the state machine is in the active state.
+     * Response {@link #rspIsActive}
+     */
+    public void reqIsActive() {
+        sendMessage(REQ_IS_ACTIVE);
+        if (DBG) log("reqIsIActive");
+    }
+
+    /**
+     * Evaluate RSP_IS_ACTIVE.
+     *
+     * @return true if the state machine is in the active state.
+     */
+    public boolean rspIsActive(Message response) {
+        boolean retVal = response.arg1 == 1;
+        if (DBG) log("rspIsActive=" + retVal);
+        return retVal;
+    }
+
+    /**
+     * @return true if the state machine is in the active state.
+     */
+    public boolean isActiveSync() {
+        Message response = sendMessageSynchronously(REQ_IS_ACTIVE);
+        if ((response != null) && (response.what == RSP_IS_ACTIVE)) {
+            return rspIsActive(response);
+        } else {
+            log("rspIsActive error response=" + response);
+            return false;
+        }
+    }
+
+    
+    //VoLTE
+    public DedicateBearerProperties[] getConcatenatedPropertiesSync() {
+        Message response = sendMessageSynchronously(REQ_GET_CONCATENATED_PROPERTIES);
+        if ((response != null) && (response.what == RSP_GET_CONCATENATED_PROPERTIES)) {
+            return (DedicateBearerProperties[])response.obj;
+        } else {
+            log("getConcatenatedPropertiesSync error response=" + response);
+            return null;
+        }
+    }
+
+    public PcscfInfo getPcscfSync() {
+        Message response = sendMessageSynchronously(REQ_GET_PCSCF);
+        if ((response != null) && (response.what == RSP_GET_PCSCF)) {
+            return (PcscfInfo)response.obj;
+        } else {
+            log("getPcscfSync error response=" + response);
+            return null;
+        }
+    }
+
+    public DedicateBearerProperties getDefaultBearerPropertiesSync() {
+        Message response = sendMessageSynchronously(REQ_GET_DEFAULT_BEARER_PROPERTIES);
+        if ((response != null) && (response.what == RSP_GET_DEFAULT_BEARER_PROPERTIES)) {
+            return (DedicateBearerProperties) response.obj;
+        } else {
+            log("getDefaultBearerPropertiesSync error response=" + response);
+            return null;
+        }
+    }
+    
+    public DedicateBearerProperties[] getConcatenatedBearersPropertiesOfDefaultBearerSync() {
+        return getConcatenatedPropertiesSync();
+    }
+    
+    public int [] getDeactivateCidArraySync() {
+        Message response = sendMessageSynchronously(REQ_GET_DEFAULT_BEARER_DEACTIVATE_CID_ARRAY);
+        if ((response != null) && (response.what == RSP_GET_DEFAULT_BEARER_DEACTIVATE_CID_ARRAY)) {
+            return (int []) response.obj;
+        } else {
+            log("getDeactivateCidArraySync error response= " + response);
+            return null;
+        }
+    }
+
+    public DcFailCause getLastDataConnectionFailCauseSync() {
+        Message response = sendMessageSynchronously(REQ_GET_LAST_DATA_CONN_FAIL_CAUSE);
+        if ((response != null) && (response.what == RSP_GET_LAST_DATA_CONN_FAIL_CAUSE)) {
+            return (DcFailCause) response.obj;
+        } else {
+            log("getLastDataConnectionFailCauseSync error response= " + response);
+            return DcFailCause.UNKNOWN;
+        }
     }
 }

@@ -22,7 +22,6 @@ import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Message;
-import android.os.UserHandle;
 import android.provider.Telephony;
 import android.telephony.SubscriptionManager;
 import android.telephony.SmsCbMessage;
@@ -75,24 +74,52 @@ public class CellBroadcastHandler extends WakeLockStateMachine {
      * @param message the Cell Broadcast to broadcast
      */
     protected void handleBroadcastSms(SmsCbMessage message) {
+        // MTK-START
+        handleBroadcastSms(message, false);
+        // MTK-END
+    }
+
+    // MTK-START
+    /**
+     * Dispatch a Cell Broadcast message to listeners.
+     * @param message the Cell Broadcast to broadcast
+     */
+    protected void handleBroadcastSms(SmsCbMessage message, boolean isPrimary) {
         String receiverPermission;
         int appOp;
-
         Intent intent;
         if (message.isEmergencyMessage()) {
-            log("Dispatching emergency SMS CB, SmsCbMessage is: " + message);
+            // MTK-START
+            log("Dispatching emergency SMS CB:" + message);
+            // MTK-END
             intent = new Intent(Telephony.Sms.Intents.SMS_EMERGENCY_CB_RECEIVED_ACTION);
+            // MTK-START
+            intent.putExtra(SmsConstants.IS_EMERGENCY_CB_PRIMARY, isPrimary);
+            // MTK-END
             receiverPermission = Manifest.permission.RECEIVE_EMERGENCY_BROADCAST;
             appOp = AppOpsManager.OP_RECEIVE_EMERGECY_SMS;
         } else {
-            log("Dispatching SMS CB, SmsCbMessage is: " + message);
+            log("Dispatching SMS CB");
             intent = new Intent(Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION);
             receiverPermission = Manifest.permission.RECEIVE_SMS;
             appOp = AppOpsManager.OP_RECEIVE_SMS;
         }
         intent.putExtra("message", message);
         SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
-        mContext.sendOrderedBroadcastAsUser(intent, UserHandle.ALL, receiverPermission, appOp,
-                mReceiver, getHandler(), Activity.RESULT_OK, null, null);
+        mContext.sendOrderedBroadcast(intent, receiverPermission, appOp, mReceiver,
+                getHandler(), Activity.RESULT_OK, null, null);
     }
+
+    /**
+     * Implemented by subclass to handle messages in {@link IdleState}.
+     * It is used to handle the ETWS primary notification. The different
+     * domain should handle by itself. Default will not handle this message.
+     * @param message the message to process
+     * @return true to transition to {@link WaitingState}; false to stay in {@link IdleState}
+     */
+    @Override
+    protected boolean handleEtwsPrimaryNotification(Message message) {
+        return false;
+    }
+    // MTK-END
 }

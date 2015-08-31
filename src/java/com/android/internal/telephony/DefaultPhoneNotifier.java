@@ -44,7 +44,7 @@ import java.util.List;
  */
 public class DefaultPhoneNotifier implements PhoneNotifier {
     private static final String LOG_TAG = "DefaultPhoneNotifier";
-    private static final boolean DBG = false; // STOPSHIP if true
+    private static final boolean DBG = true; // STOPSHIP if true
 
     protected ITelephonyRegistry mRegistry;
 
@@ -173,7 +173,21 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
             networkCapabilities = sender.getNetworkCapabilities(apnType);
         }
         ServiceState ss = sender.getServiceState();
-        if (ss != null) roaming = ss.getDataRoaming();
+        if (ss != null) roaming = ss.getRoaming();
+
+        //M: ALPS01747520, get network type by sub when more than one SIM.
+        int networkType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+        if (telephony != null) {
+            int phoneCount = telephony.getPhoneCount();
+            if (phoneCount > 1) {
+                networkType = telephony.getNetworkType(subId);
+            } else {
+                networkType = telephony.getNetworkType();
+            }
+        }
+
+        if (DBG) log("doNotifyDataConnection " + "apnType=" + apnType + ",networkType="
+            + networkType + ", state=" + state);
 
         try {
             if (mRegistry != null) {
@@ -184,8 +198,7 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
                     apnType,
                     linkProperties,
                     networkCapabilities,
-                    ((telephony!=null) ? telephony.getDataNetworkType(subId) :
-                    TelephonyManager.NETWORK_TYPE_UNKNOWN),
+                    networkType,
                     roaming);
             }
         } catch (RemoteException ex) {

@@ -22,11 +22,8 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.telephony.Rlog;
 
-
-import com.android.internal.telephony.EncodeException;
 import com.android.internal.telephony.GsmAlphabet;
 import java.io.UnsupportedEncodingException;
-import java.nio.charset.Charset;
 
 /**
  * Various methods, useful for dealing with SIM data.
@@ -529,29 +526,148 @@ public class IccUtils {
         return result;
     }
 
-    static byte[]
-    stringToAdnStringField(String alphaTag) {
-        boolean isUcs2 = false;
-        try {
-           for(int i = 0; i < alphaTag.length(); i++) {
-               GsmAlphabet.countGsmSeptets(alphaTag.charAt(i), true);
-           }
-        } catch (EncodeException e) {
-            isUcs2 = true;
+    // Added by M begin
+    /**
+     * Many fields in GSM SIM's are stored as nibble-swizzled BCD
+     *
+     * Assumes 0xf as normal value .
+     *
+     *  returning string
+     */
+    public static String
+    parseIccIdToString(byte[] data, int offset, int length) {
+        StringBuilder ret = new StringBuilder(length * 2);
+
+        for (int i = offset ; i < offset + length ; i++) {
+            byte b;
+            int v;
+
+            v = data[i] & 0xf;
+            if (0 <= v && v <= 9) {
+                ret.append((char) ('0' + v));
+            } else {
+                ret.append((char) ('a' + v - 0xa));
+            }
+
+            v = (data[i] >> 4) & 0xf;
+            if (0 <= v && v <= 9) {
+                ret.append((char) ('0' + v));
+            } else {
+                ret.append((char) ('a' + v - 0xa));
+            }
         }
-        return stringToAdnStringField(alphaTag, isUcs2);
+
+        return ret.toString();
     }
 
-    static byte[]
-    stringToAdnStringField(String alphaTag, boolean isUcs2) {
-        if (!isUcs2) {
-            return GsmAlphabet.stringToGsm8BitPacked(alphaTag);
-        }
-        byte[] alphaTagBytes = alphaTag.getBytes(Charset.forName("UTF-16BE"));
-        byte[] ret = new byte[1 + alphaTagBytes.length];
-        ret[0] = (byte)0x80;
-        System.arraycopy(alphaTagBytes, 0, ret, 1, alphaTagBytes.length);
+    public static String
+       parsePlmnToStringForEfOpl(byte[] data, int offset, int length) {
 
-        return ret;
+        StringBuilder ret = new StringBuilder(length * 2);
+        int v;
+
+        do {
+            v = data[offset] & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+
+            v = (data[offset] >> 4) & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+
+            v = data[offset + 1] & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+
+            v = data[offset + 2] & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+
+            v = (data[offset + 2] >> 4) & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+
+            v = (data[offset + 1] >> 4) & 0xf;
+            if (v >= 0 && v <= 9)
+                ret.append((char) ('0' + v));
+            else if (v == 13) // wild-carding
+                ret.append((char) ('d'));
+            else
+                break;
+        }   while(false);
+
+        return ret.toString();
     }
+
+    public static String parseLanguageIndicator(byte[] rawData, int offset, int length) {
+        if (null == rawData) {
+            return null;
+        }
+
+        if (rawData.length < offset + length) {
+            Rlog.e(LOG_TAG, "length is invalid");
+            return null;
+        }
+
+        return GsmAlphabet.gsm8BitUnpackedToString(rawData, offset, length);
+    }
+
+    /*
+      * parse plmn according to spec 24008
+    */
+    public static String
+       parsePlmnToString(byte[] data, int offset, int length) {
+
+        StringBuilder ret = new StringBuilder(length * 2);
+        int v;
+
+        do {
+            v = data[offset] & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+
+            v = (data[offset] >> 4) & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+
+            v = data[offset + 1] & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+
+            v = data[offset + 2] & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+
+            v = (data[offset + 2] >> 4) & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+
+            v = (data[offset + 1] >> 4) & 0xf;
+            if (v > 9)  break;
+                ret.append((char) ('0' + v));
+        }   while(false);
+
+        return ret.toString();
+    }
+    // Added by M end
 }

@@ -17,6 +17,9 @@
 package com.android.internal.telephony.cat;
 
 import android.graphics.Bitmap;
+import com.android.internal.telephony.cat.bip.OtherAddress;
+import com.android.internal.telephony.cat.bip.TransportProtocol;
+import com.android.internal.telephony.cat.bip.BearerDesc;
 
 /**
  * Container class for proactive command parameters.
@@ -43,6 +46,22 @@ class CommandParams {
     }
 }
 
+/**
+ * CallCtrlBySimParams class for CC by SIM parameters.
+ */
+class CallCtrlBySimParams extends CommandParams {
+    TextMessage mTextMsg;
+    int mInfoType;
+    String mDestAddress;
+
+    CallCtrlBySimParams(CommandDetails cmdDet, TextMessage textMsg,
+        int infoType, String destAddress) {
+        super(cmdDet);
+        mTextMsg = textMsg;
+        mInfoType = infoType;
+        mDestAddress = destAddress;
+    }
+}
 class DisplayTextParams extends CommandParams {
     TextMessage mTextMsg;
 
@@ -214,6 +233,107 @@ class BIPClientParams extends CommandParams {
         return false;
     }
 }
+
+// Add by Huibin Mao Mtk80229
+// ICS Migration start
+class SetupEventListParams extends CommandParams {
+    byte[] eventList;
+
+    SetupEventListParams(CommandDetails cmdDet, byte[] eventList) {
+        super(cmdDet);
+        this.eventList = eventList;
+    }
+
+}
+
+class OpenChannelParams extends CommandParams {
+    public BearerDesc bearerDesc = null;
+    public int bufferSize = 0;
+    public OtherAddress localAddress = null;
+    public TransportProtocol transportProtocol = null;
+    public OtherAddress dataDestinationAddress = null;
+    public TextMessage textMsg = null;
+
+    public GprsParams gprsParams = null;
+
+    OpenChannelParams(CommandDetails cmdDet,
+            BearerDesc bearerDesc, int size, OtherAddress localAddress,
+            TransportProtocol transportProtocol, OtherAddress address,
+            String apn, String login, String pwd, TextMessage textMsg) {
+        super(cmdDet);
+        this.bearerDesc = bearerDesc;
+        this.bufferSize = size;
+        this.localAddress = localAddress;
+        this.transportProtocol = transportProtocol;
+        this.dataDestinationAddress = address;
+        this.textMsg = textMsg;
+        this.gprsParams = new GprsParams(apn, login, pwd);
+    }
+
+    public class GprsParams {
+        public String accessPointName = null;
+        public String userLogin = null;
+        public String userPwd = null;
+
+        GprsParams(String apn, String login, String pwd) {
+            this.accessPointName = apn;
+            this.userLogin = login;
+            this.userPwd = pwd;
+        }
+    }
+}
+
+class CloseChannelParams extends CommandParams {
+    TextMessage textMsg = new TextMessage();
+    int mCloseCid = 0;
+    boolean mBackToTcpListen = false;
+
+    CloseChannelParams(CommandDetails cmdDet, int cid, TextMessage textMsg, boolean backToTcpListen) {
+        super(cmdDet);
+        this.textMsg = textMsg;
+        mCloseCid = cid;
+        mBackToTcpListen = backToTcpListen;
+    }
+}
+
+class ReceiveDataParams extends CommandParams {
+    int channelDataLength = 0;
+    TextMessage textMsg = new TextMessage();
+    int mReceiveDataCid = 0;
+
+    ReceiveDataParams(CommandDetails cmdDet, int length, int cid, TextMessage textMsg) {
+        super(cmdDet);
+        this.channelDataLength = length;
+        this.textMsg = textMsg;
+        this.mReceiveDataCid = cid;
+    }
+}
+
+class SendDataParams extends CommandParams {
+    byte[] channelData = null;
+    TextMessage textMsg = new TextMessage();
+    int mSendDataCid = 0;
+    int mSendMode = 0;
+
+    SendDataParams(CommandDetails cmdDet, byte[] data, int cid, TextMessage textMsg, int sendMode) {
+        super(cmdDet);
+        this.channelData = data;
+        this.textMsg = textMsg;
+        mSendDataCid = cid;
+        mSendMode =  sendMode;
+    }
+}
+
+class GetChannelStatusParams extends CommandParams {
+    TextMessage textMsg = new TextMessage();
+
+    GetChannelStatusParams(CommandDetails cmdDet, TextMessage textMsg) {
+        super(cmdDet);
+        this.textMsg = textMsg;
+    }
+}
+// ICS Migration end
+
 class ActivateParams extends CommandParams {
     int mActivateTarget;
 

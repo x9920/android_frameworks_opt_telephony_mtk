@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2015, Linux Foundation. All rights reserved.
- * Not a Contribution.
- *
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,9 +17,6 @@
 package com.android.internal.telephony.uicc;
 
 import android.content.Context;
-import android.content.Intent;
-import android.telephony.TelephonyManager;
-
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
@@ -32,16 +26,10 @@ import android.os.RegistrantList;
 import android.telephony.TelephonyManager;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
-import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
-import com.android.internal.telephony.PhoneConstants;
-import com.android.internal.telephony.SubscriptionController;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ALPHA;
 
 /**
  * {@hide}
@@ -66,8 +54,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
 
     protected AdnRecordCache mAdnCache;
 
-    private SpnOverride mSpnOverride;
-
     // ***** Cached SIM State; cleared on channel close
 
     protected boolean mRecordsRequested = false; // true if we've made requests for the sim records
@@ -82,15 +68,14 @@ public abstract class IccRecords extends Handler implements IccConstants {
     protected String mNewVoiceMailNum = null;
     protected String mNewVoiceMailTag = null;
     protected boolean mIsVoiceMailFixed = false;
+    protected int mCountVoiceMessages = 0;
     protected String mImsi;
     private IccIoResult auth_rsp;
 
     protected int mMncLength = UNINITIALIZED;
     protected int mMailboxIndex = 0; // 0 is no mailbox dailing number associated
 
-    protected int mSmsCountOnIcc = -1;
-
-    protected String mSpn;
+    private String mSpn;
 
     protected String mGid1;
 
@@ -113,16 +98,8 @@ public abstract class IccRecords extends Handler implements IccConstants {
     public static final int EVENT_SPN = 2; // Service Provider Name
 
     public static final int EVENT_GET_ICC_RECORD_DONE = 100;
-    public static final int EVENT_REFRESH = 31; // ICC refresh occurred
-    protected static final int EVENT_GET_SMS_RECORD_SIZE_DONE = 28;
-    public static final int EVENT_REFRESH_OEM = 29;
     protected static final int EVENT_APP_READY = 1;
     private static final int EVENT_AKA_AUTHENTICATE_DONE          = 90;
-
-    private boolean mOEMHookSimRefresh = false;
-
-    public static final int DEFAULT_VOICE_MESSAGE_COUNT = -2;
-    public static final int UNKNOWN_VOICE_MESSAGE_COUNT = -1;
 
     @Override
     public String toString() {
@@ -131,7 +108,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
                 + " mCi=" + mCi
                 + " mFh=" + mFh
                 + " mParentApp=" + mParentApp
-                + " mSpnOverride=" + "mSpnOverride"
                 + " recordsLoadedRegistrants=" + mRecordsLoadedRegistrants
                 + " mImsiReadyRegistrants=" + mImsiReadyRegistrants
                 + " mRecordsEventsRegistrants=" + mRecordsEventsRegistrants
@@ -142,12 +118,14 @@ public abstract class IccRecords extends Handler implements IccConstants {
                 + " adnCache=" + mAdnCache
                 + " recordsRequested=" + mRecordsRequested
                 + " iccid=" + mIccId
+                + " msisdn=" + mMsisdn
                 + " msisdnTag=" + mMsisdnTag
                 + " voiceMailNum=" + mVoiceMailNum
                 + " voiceMailTag=" + mVoiceMailTag
                 + " newVoiceMailNum=" + mNewVoiceMailNum
                 + " newVoiceMailTag=" + mNewVoiceMailTag
                 + " isVoiceMailFixed=" + mIsVoiceMailFixed
+                + " countVoiceMessages=" + mCountVoiceMessages
                 + " mImsi=" + mImsi
                 + " mncLength=" + mMncLength
                 + " mailboxIndex=" + mMailboxIndex
@@ -177,14 +155,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
         mCi = ci;
         mFh = app.getIccFileHandler();
         mParentApp = app;
-        mOEMHookSimRefresh = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_sim_refresh_for_dual_mode_card);
-        if (mOEMHookSimRefresh) {
-            mCi.registerForSimRefreshEvent(this, EVENT_REFRESH_OEM, null);
-        } else {
-            mCi.registerForIccRefresh(this, EVENT_REFRESH, null);
-        }
-        mSpnOverride = new SpnOverride();
     }
 
     /**
@@ -192,11 +162,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
      */
     public void dispose() {
         mDestroyed.set(true);
-        if (mOEMHookSimRefresh) {
-            mCi.unregisterForSimRefreshEvent(this);
-        } else {
-            mCi.unregisterForIccRefresh(this);
-        }
         mParentApp = null;
         mFh = null;
         mCi = null;
@@ -206,20 +171,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
     public abstract void onReady();
 
     //***** Public Methods
-
-    /*
-     * Called to indicate that anyone could request records
-     * in the future after this call, once records are loaded and registrants
-     * have been notified. This indication could be used
-     * to optimize when to actually fetch records from the card. We
-     * don't need to fetch records from the card if it is of no use
-     * to anyone
-     *
-     */
-    void recordsRequired() {
-        return;
-    }
-
     public AdnRecordCache getAdnCache() {
         return mAdnCache;
     }
@@ -233,38 +184,13 @@ public abstract class IccRecords extends Handler implements IccConstants {
             return;
         }
 
-        for (int i = mRecordsLoadedRegistrants.size() - 1; i >= 0 ; i--) {
-            Registrant  r = (Registrant) mRecordsLoadedRegistrants.get(i);
-            Handler rH = r.getHandler();
-
-            if (rH != null && rH == h) {
-                return;
-            }
-        }
         Registrant r = new Registrant(h, what, obj);
         mRecordsLoadedRegistrants.add(r);
 
-        // Do not notify the registrant if the records were loaded but the app state
-        // is not ready. Consider the case -Sub/sim is enabled, sim is ready for use and a client
-        // is registered for records loaded notification. At a later point, the subscription is
-        // disabled, due to which the client unregisters for the notification and the app state has
-        // moved to detected. When the sub is enabled again, the client would register for records
-        // loaded. At this point the cached values of the record load state is available(as the
-        // records were not disposed), but the app state has not moved to ready. If the client is
-        // notified of records loaded event in such a situation, the client would erroneously think
-        // that the sim is ready and all the records are available. The client should be
-        // notified once the app state has moved to ready and the records have been loaded after
-        // the sub has been successfully enabled.
-        // TODO: Dispose the records once the sub has been disabled instead of checking for
-        // the app state .
-        if (mRecordsToLoad == 0 && mRecordsRequested == true
-                && isAppStateReady()) {
+        if (mRecordsToLoad == 0 && mRecordsRequested == true) {
             r.notifyRegistrant(new AsyncResult(null, null, null));
-        } else {
-            log("registerForRecordsLoaded, not notifying the registrant immediately");
         }
     }
-
     public void unregisterForRecordsLoaded(Handler h) {
         mRecordsLoadedRegistrants.remove(h);
     }
@@ -277,25 +203,10 @@ public abstract class IccRecords extends Handler implements IccConstants {
         Registrant r = new Registrant(h, what, obj);
         mImsiReadyRegistrants.add(r);
 
-        // Do not notify the registrant if imsi is available but the app state
-        // is not ready. Consider the case - a client is registered for imsi ready
-        // notification. At a later point, the subscription is disabled, due to which the
-        // client unregisters for the notification and the app state has moved to detected.
-        // When the sub is enabled again, the client would register for imsi ready. At this point
-        // the cached imsi is available(as the records were not disposed), but the app state has
-        // not moved to ready. If the client is notified of imsi ready in such a situation,
-        // the client would erroneously think that the sim is ready and imsi is available for use.
-        // The client should be notified once the app state has moved to ready and the imsi has
-        // been read after the sub has been successfully enabled.
-        // TODO: Dispose the records once the sub has been disabled instead of checking for
-        // the app state.
-        if ((mImsi != null) && isAppStateReady()) {
+        if (mImsi != null) {
             r.notifyRegistrant(new AsyncResult(null, null, null));
-        } else {
-            log("registerForImsiReady, not notifying the registrant immediately");
         }
     }
-
     public void unregisterForImsiReady(Handler h) {
         mImsiReadyRegistrants.remove(h);
     }
@@ -348,16 +259,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
     public void setImsi(String imsi) {
         mImsi = imsi;
         mImsiReadyRegistrants.notifyRegistrants();
-    }
-
-    /**
-     * Get the Network Access ID (NAI) on a CSIM for CDMA like networks. Default is null if IMSI is
-     * not supported or unavailable.
-     *
-     * @return null if NAI is not yet ready or unavailable
-     */
-    public String getNAI() {
-        return null;
     }
 
     public String getMsisdnNumber() {
@@ -442,16 +343,8 @@ public abstract class IccRecords extends Handler implements IccConstants {
     }
 
     protected void setServiceProviderName(String spn) {
+        log("setServiceProviderName: spn=" + spn);
         mSpn = spn;
-    }
-
-    protected void setSpnFromConfig(String carrier) {
-        if (mSpnOverride.containsCarrier(carrier)) {
-            String overrideSpn = mSpnOverride.getSpn(carrier);
-            log("set override spn carrier: " + carrier + ", spn: " + overrideSpn);
-            setServiceProviderName(overrideSpn);
-            setSystemProperty(PROPERTY_ICC_OPERATOR_ALPHA, getServiceProviderName());
-        }
     }
 
     /**
@@ -494,10 +387,19 @@ public abstract class IccRecords extends Handler implements IccConstants {
      */
     public abstract void setVoiceMessageWaiting(int line, int countWaiting);
 
+    /** @return  true if there are messages waiting, false otherwise. */
+    public boolean getVoiceMessageWaiting() {
+        return mCountVoiceMessages != 0;
+    }
+
     /**
-     * Called by GsmPhone to update VoiceMail count
+     * Returns number of voice messages waiting, if available
+     * If not available (eg, on an older CPHS SIM) -1 is returned if
+     * getVoiceMessageWaiting() is true
      */
-    public abstract int getVoiceMessageCount();
+    public int getVoiceMessageCount() {
+        return mCountVoiceMessages;
+    }
 
     /**
      * Called by STK Service when REFRESH is received.
@@ -532,6 +434,7 @@ public abstract class IccRecords extends Handler implements IccConstants {
     @Override
     public void handleMessage(Message msg) {
         AsyncResult ar;
+
         switch (msg.what) {
             case EVENT_GET_ICC_RECORD_DONE:
                 try {
@@ -550,25 +453,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
                 } finally {
                     // Count up record load responses even if they are fails
                     onRecordLoaded();
-                }
-                break;
-            case EVENT_REFRESH:
-                ar = (AsyncResult)msg.obj;
-                if (DBG) log("Card REFRESH occurred: ");
-                if (ar.exception == null) {
-                     broadcastRefresh();
-                     handleRefresh((IccRefreshResponse)ar.result);
-                } else {
-                    loge("Icc refresh Exception: " + ar.exception);
-                }
-                break;
-            case EVENT_REFRESH_OEM:
-                ar = (AsyncResult)msg.obj;
-                if (DBG) log("Card REFRESH OEM occurred: ");
-                if (ar.exception == null) {
-                    handleRefreshOem((byte[])ar.result);
-                } else {
-                    loge("Icc refresh OEM Exception: " + ar.exception);
                 }
                 break;
 
@@ -591,121 +475,11 @@ public abstract class IccRecords extends Handler implements IccConstants {
                 }
 
                 break;
-            case EVENT_GET_SMS_RECORD_SIZE_DONE:
-                ar = (AsyncResult) msg.obj;
-
-                if (ar.exception != null) {
-                    loge("Exception in EVENT_GET_SMS_RECORD_SIZE_DONE " + ar.exception);
-                    break;
-                }
-
-                int[] recordSize = (int[])ar.result;
-                try {
-                    // recordSize[0]  is the record length
-                    // recordSize[1]  is the total length of the EF file
-                    // recordSize[2]  is the number of records in the EF file
-                    mSmsCountOnIcc = recordSize[2];
-                    log("EVENT_GET_SMS_RECORD_SIZE_DONE Size " + recordSize[0]
-                            + " total " + recordSize[1]
-                                    + " record " + recordSize[2]);
-                } catch (ArrayIndexOutOfBoundsException exc) {
-                    loge("ArrayIndexOutOfBoundsException in EVENT_GET_SMS_RECORD_SIZE_DONE: "
-                            + exc.toString());
-                }
-                break;
 
             default:
                 super.handleMessage(msg);
         }
     }
-
-    protected abstract void handleFileUpdate(int efid);
-
-    protected void broadcastRefresh() {
-    }
-
-    protected void handleRefresh(IccRefreshResponse refreshResponse){
-        if (refreshResponse == null) {
-            if (DBG) log("handleRefresh received without input");
-            return;
-        }
-
-        if (refreshResponse.aid != null &&
-                !refreshResponse.aid.equals(mParentApp.getAid())) {
-            // This is for different app. Ignore.
-            return;
-        }
-
-        switch (refreshResponse.refreshResult) {
-            case IccRefreshResponse.REFRESH_RESULT_FILE_UPDATE:
-                if (DBG) log("handleRefresh with SIM_FILE_UPDATED");
-                handleFileUpdate(refreshResponse.efId);
-                break;
-            case IccRefreshResponse.REFRESH_RESULT_INIT:
-                if (DBG) log("handleRefresh with SIM_REFRESH_INIT");
-                // need to reload all files (that we care about)
-                if (mAdnCache != null) {
-                    mAdnCache.reset();
-                    //We will re-fetch the records when the app
-                    // goes back to the ready state. Nothing to do here.
-                }
-                break;
-            case IccRefreshResponse.REFRESH_RESULT_RESET:
-                if (DBG) log("handleRefresh with SIM_REFRESH_RESET");
-                if (powerOffOnSimReset()) {
-                    mCi.setRadioPower(false, null);
-                    /* Note: no need to call setRadioPower(true).  Assuming the desired
-                    * radio power state is still ON (as tracked by ServiceStateTracker),
-                    * ServiceStateTracker will call setRadioPower when it receives the
-                    * RADIO_STATE_CHANGED notification for the power off.  And if the
-                    * desired power state has changed in the interim, we don't want to
-                    * override it with an unconditional power on.
-                    */
-                } else {
-                    if(mAdnCache != null) {
-                        mAdnCache.reset();
-                    }
-                    mRecordsRequested = false;
-                    mImsi = null;
-                }
-                //We will re-fetch the records when the app
-                // goes back to the ready state. Nothing to do here.
-                break;
-            default:
-                // unknown refresh operation
-                if (DBG) log("handleRefresh with unknown operation");
-                break;
-        }
-    }
-
-    private void handleRefreshOem(byte[] data){
-        ByteBuffer payload = ByteBuffer.wrap(data);
-        IccRefreshResponse response = UiccController.parseOemSimRefresh(payload);
-
-        IccCardApplicationStatus appStatus = new IccCardApplicationStatus();
-        AppType appType = appStatus.AppTypeFromRILInt(payload.getInt());
-        int slotId = (int)payload.get();
-        if ((appType != AppType.APPTYPE_UNKNOWN)
-            && (appType != mParentApp.getType())) {
-            // This is for different app. Ignore.
-            return;
-        }
-
-        broadcastRefresh();
-        handleRefresh(response);
-
-        if (response.refreshResult == IccRefreshResponse.REFRESH_RESULT_FILE_UPDATE ||
-            response.refreshResult == IccRefreshResponse.REFRESH_RESULT_INIT) {
-            log("send broadcast org.codeaurora.intent.action.ACTION_SIM_REFRESH_UPDATE");
-            Intent sendIntent = new Intent(
-                    "org.codeaurora.intent.action.ACTION_SIM_REFRESH_UPDATE");
-            if (TelephonyManager.getDefault().isMultiSimEnabled()){
-                sendIntent.putExtra(PhoneConstants.SLOT_KEY, slotId);
-            }
-            mContext.sendBroadcast(sendIntent, null);
-        }
-    }
-
 
     protected abstract void onRecordLoaded();
 
@@ -738,14 +512,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
      */
     public String getOperatorNumeric() {
         return null;
-    }
-
-    /**
-     * Check if call forward info is stored on SIM
-     * @return true if call forward info is stored on SIM.
-     */
-    public boolean isCallForwardStatusStored() {
-        return false;
     }
 
     /**
@@ -803,12 +569,21 @@ public abstract class IccRecords extends Handler implements IccConstants {
         return null;
     }
 
+    /*
+      Detail description:
+      This feature provides a interface to get menu title string from EF_SUME
+    */
+    public String getMenuTitleFromEf() {
+        return null;
+    }
+
     protected void setSystemProperty(String key, String val) {
-        TelephonyManager.getDefault().setTelephonyProperty(mParentApp.getPhoneId(), key, val);
+        // TODO: Rollback the both lines when Sprout patch to L completely
+        //TelephonyManager.getDefault().setTelephonyProperty(mParentApp.getPhoneId(), key, val);
+        TelephonyManager.getDefault().setTelephonyProperty(key, mParentApp.getSubId(), val);
 
         log("[key, value]=" + key + ", " +  val);
     }
-
     /**
      * Returns the response of the SIM application on the UICC to authentication
      * challenge/response algorithm. The data string and challenge response are
@@ -859,21 +634,12 @@ public abstract class IccRecords extends Handler implements IccConstants {
             com.android.internal.R.bool.config_requireRadioPowerOffOnSimRefreshReset);
     }
 
-    /**
-     * To get SMS capacity count on ICC card.
-     */
-    public int getSmsCapacityOnIcc() {
-        if (DBG) log("getSmsCapacityOnIcc: " + mSmsCountOnIcc);
-        return mSmsCountOnIcc;
-    }
-
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("IccRecords: " + this);
         pw.println(" mDestroyed=" + mDestroyed);
         pw.println(" mCi=" + mCi);
         pw.println(" mFh=" + mFh);
         pw.println(" mParentApp=" + mParentApp);
-        pw.println(" mSpnOverride=" + mSpnOverride);
         pw.println(" recordsLoadedRegistrants: size=" + mRecordsLoadedRegistrants.size());
         for (int i = 0; i < mRecordsLoadedRegistrants.size(); i++) {
             pw.println("  recordsLoadedRegistrants[" + i + "]="
@@ -911,6 +677,7 @@ public abstract class IccRecords extends Handler implements IccConstants {
         pw.println(" mNewVoiceMailNum=" + mNewVoiceMailNum);
         pw.println(" mNewVoiceMailTag=" + mNewVoiceMailTag);
         pw.println(" mIsVoiceMailFixed=" + mIsVoiceMailFixed);
+        pw.println(" mCountVoiceMessages=" + mCountVoiceMessages);
         pw.println(" mImsi=" + mImsi);
         pw.println(" mMncLength=" + mMncLength);
         pw.println(" mMailboxIndex=" + mMailboxIndex);
@@ -918,15 +685,63 @@ public abstract class IccRecords extends Handler implements IccConstants {
         pw.flush();
     }
 
-    protected boolean powerOffOnSimReset() {
-        return !mContext.getResources().getBoolean(
-                com.android.internal.R.bool.skip_radio_power_off_on_sim_refresh_reset);
+    // Added by M begin
+    public static final int EVENT_MSISDN = 100; // MSISDN update
+
+    protected String mOldMccMnc = "";
+    // AT&T RAT balancing
+    public static final int EF_RAT_UNDEFINED = 0xFFFFFF00;
+    public static final int EF_RAT_NOT_EXIST_IN_USIM = 0x00000100;
+    public static final int EF_RAT_FOR_OTHER_CASE = 0x00000200;
+
+    // ALPS00302702 RAT balancing
+    public int getEfRatBalancing() {
+        return EF_RAT_UNDEFINED;
     }
 
-    protected boolean isAppStateReady() {
-        AppState appState = mParentApp.getState();
-        if (DBG) log("isAppStateReady : appState = " + appState);
-        return (appState == AppState.APPSTATE_READY);
+    // MVNO-API START
+    public String getSpNameInEfSpn() {
+        return null;
     }
 
+    public String isOperatorMvnoForImsi() {
+        return null;
+    }
+
+    public String getFirstFullNameInEfPnn() {
+        return null;
+    }
+
+    public String isOperatorMvnoForEfPnn() {
+        return null;
+    }
+
+    public String getMvnoMatchType() {
+        return null;
+    }
+    // MVNO-API END
+
+    public String getSIMCPHSOns() {
+        return null;
+    }
+
+    public String getEfGbabp() {
+        return null;
+    }
+
+    public void setEfGbabp(String gbabp, Message onComplete) {}
+
+    public byte[] getEfPsismsc() {
+        return null;
+    }
+
+    public byte[] getEfSmsp() {
+        return null;
+    }
+
+    public int getMncLength() {
+        return 0;
+    }
+
+    // Added by M end
 }

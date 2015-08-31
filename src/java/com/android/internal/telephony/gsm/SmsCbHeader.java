@@ -90,7 +90,9 @@ class SmsCbHeader {
     /** CMAS warning notification info. */
     private final SmsCbCmasInfo mCmasInfo;
 
-    public SmsCbHeader(byte[] pdu) throws IllegalArgumentException {
+    // MTK-START
+    public SmsCbHeader(byte[] pdu, boolean isEtwsPrimary) throws IllegalArgumentException {
+    // MTK-END
         if (pdu == null || pdu.length < PDU_HEADER_LENGTH) {
             throw new IllegalArgumentException("Illegal PDU");
         }
@@ -103,7 +105,9 @@ class SmsCbHeader {
             mGeographicalScope = (pdu[0] & 0xc0) >>> 6;
             mSerialNumber = ((pdu[0] & 0xff) << 8) | (pdu[1] & 0xff);
             mMessageIdentifier = ((pdu[2] & 0xff) << 8) | (pdu[3] & 0xff);
-            if (isEtwsMessage() && pdu.length <= PDU_LENGTH_ETWS) {
+            // MTK-START
+            if (isEtwsMessage() && pdu.length <= PDU_LENGTH_ETWS && isEtwsPrimary) {
+            // MTK-END
                 mFormat = FORMAT_ETWS_PRIMARY;
                 mDataCodingScheme = -1;
                 mPageIndex = -1;
@@ -181,6 +185,12 @@ class SmsCbHeader {
             mCmasInfo = null;
         }
     }
+
+    // MTK-START, add new constructor to identify the primary ETWS or normal CB
+    public SmsCbHeader(byte[] pdu) throws IllegalArgumentException {
+        this(pdu, true);
+    }
+    // MTK-END
 
     int getGeographicalScope() {
         return mGeographicalScope;

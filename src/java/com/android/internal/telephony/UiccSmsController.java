@@ -2,7 +2,6 @@
  * Copyright (C) 2008 The Android Open Source Project
  * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  * Not a Contribution.
- * Copyright (c) 2015 The CyanogenMod Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,194 +18,50 @@
 
 package com.android.internal.telephony;
 
-import android.Manifest;
-import android.app.Activity;
-import android.app.ActivityThread;
-import android.app.AppOpsManager;
 import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
-import android.content.ComponentName;
-import android.content.Context;
-import android.content.Intent;
 import android.net.Uri;
-import android.os.Binder;
-import android.os.Handler;
-import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.os.UserHandle;
-import android.provider.Telephony.Sms.Intents;
 import android.telephony.Rlog;
-import android.telephony.SmsMessage;
-import android.telephony.SubscriptionInfo;
-import android.util.Log;
 import android.telephony.SubscriptionManager;
-import android.telephony.TelephonyManager;
 
-import java.util.List;
+import com.android.internal.telephony.ISms;
+import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.SmsRawData;
+
 import java.util.ArrayList;
+import java.util.List;
+
+// MTK-START
+import android.os.Bundle;
+import android.telephony.SmsParameters;
+import com.mediatek.internal.telephony.IccSmsStorageStatus;
+import android.telephony.SimSmsInsertStatus;
+import com.mediatek.internal.telephony.SmsCbConfigInfo;
+import static android.telephony.SmsManager.RESULT_ERROR_GENERIC_FAILURE;
+// MTK-END
 
 /**
  * UiccSmsController to provide an inter-process communication to
  * access Sms in Icc.
  */
 public class UiccSmsController extends ISms.Stub {
-
     static final String LOG_TAG = "RIL_UiccSmsController";
 
     protected Phone[] mPhone;
 
-    protected UiccSmsController(Phone[] phone, Context context){
+    protected UiccSmsController(Phone[] phone){
         mPhone = phone;
-        mContext = context;
+
         if (ServiceManager.getService("isms") == null) {
             ServiceManager.addService("isms", this);
         }
-
-        createWakelock();
-    }
-
-    private void createWakelock() {
-        PowerManager pm = (PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
-        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "IccSmsInterfaceManager");
-        mWakeLock.setReferenceCounted(true);
-    }
-
-    private BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        public void onReceive(Context context, Intent intent) {
-            // check if the message was aborted
-            if (getResultCode() != Activity.RESULT_OK) {
-                return;
-            }
-            String destAddr = getResultData();
-            String scAddr = intent.getStringExtra("scAddr");
-            int subId = intent.getIntExtra("subId", getDefaultSmsSubId());
-            String callingPackage = intent.getStringExtra("callingPackage");
-            ArrayList<String> parts = intent.getStringArrayListExtra("parts");
-            ArrayList<PendingIntent> sentIntents = intent.getParcelableArrayListExtra("sentIntents");
-            ArrayList<PendingIntent> deliveryIntents = intent.getParcelableArrayListExtra("deliveryIntents");
-
-            if (intent.getIntExtra("callingUid", 0) != 0) {
-                callingPackage = callingPackage + "\\" + intent.getIntExtra("callingUid", 0);
-            }
-
-            if (intent.getBooleanExtra("multipart", false)) {
-                if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
-                    log("ProxiedMultiPartSms destAddr: " + destAddr +
-                            "\n scAddr= " + scAddr +
-                            "\n subId= " + subId +
-                            "\n callingPackage= " + callingPackage +
-                            "\n partsSize= " + parts.size());
-                }
-                getIccSmsInterfaceManager(subId)
-                        .sendMultipartText(callingPackage, destAddr, scAddr, parts,
-                                sentIntents, deliveryIntents);
-                return;
-            }
-
-            PendingIntent sentIntent = null;
-            if (sentIntents != null && sentIntents.size() > 0) {
-                sentIntent = sentIntents.get(0);
-            }
-            PendingIntent deliveryIntent = null;
-            if (deliveryIntents != null && deliveryIntents.size() > 0) {
-                deliveryIntent = deliveryIntents.get(0);
-            }
-            String text = null;
-            if (parts != null && parts.size() > 0) {
-                text = parts.get(0);
-            }
-            if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
-                log("ProxiedSms destAddr: " + destAddr +
-                        "\n scAddr=" + scAddr +
-                        "\n subId= " + subId +
-                        "\n callingPackage=" + callingPackage);
-            }
-            getIccSmsInterfaceManager(subId).sendText(callingPackage, destAddr,
-                    scAddr, text, sentIntent, deliveryIntent);
-        }
-    };
-
-    private Context mContext;
-    private PowerManager.WakeLock mWakeLock;
-    private static final int WAKE_LOCK_TIMEOUT = 5000;
-    private final Handler mHandler = new Handler();
-    private void dispatchPdus(byte[][] pdus) {
-        Intent intent = new Intent(Intents.SMS_DELIVER_ACTION);
-        // Direct the intent to only the default SMS app. If we can't find a default SMS app
-        // then send it to all broadcast receivers.
-        ComponentName componentName = SmsApplication.getDefaultSmsApplication(mContext, true);
-        if (componentName == null)
-            return;
-
-        if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
-            log("dispatchPdu pdus: " + pdus +
-                    "\n componentName=" + componentName +
-                    "\n format=" + SmsMessage.FORMAT_SYNTHETIC);
-        }
-
-        // Deliver SMS message only to this receiver
-        intent.setComponent(componentName);
-        intent.putExtra("pdus", pdus);
-        intent.putExtra("format", SmsMessage.FORMAT_SYNTHETIC);
-        dispatch(intent, Manifest.permission.RECEIVE_SMS);
-
-        intent.setAction(Intents.SMS_RECEIVED_ACTION);
-        intent.setComponent(null);
-        dispatch(intent, Manifest.permission.RECEIVE_SMS);
-    }
-
-    private void dispatch(Intent intent, String permission) {
-        // Hold a wake lock for WAKE_LOCK_TIMEOUT seconds, enough to give any
-        // receivers time to take their own wake locks.
-        mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-        intent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT);
-        mContext.sendOrderedBroadcast(intent, permission, AppOpsManager.OP_RECEIVE_SMS, null,
-                mHandler, Activity.RESULT_OK, null, null);
-    }
-
-    private void broadcastOutgoingSms(
-            int subId, String callingPackage, String destAddr, String scAddr, boolean multipart,
-            ArrayList<String> parts, ArrayList<PendingIntent> sentIntents,
-            ArrayList<PendingIntent> deliveryIntents, int priority, boolean isExpectMore,
-            int validityPeriod) {
-        Intent broadcast = new Intent(Intent.ACTION_NEW_OUTGOING_SMS);
-        broadcast.putExtra("destAddr", destAddr);
-        broadcast.putExtra("scAddr", scAddr);
-        broadcast.putExtra("subId", subId);
-        broadcast.putExtra("multipart", multipart);
-        broadcast.putExtra("callingPackage", callingPackage);
-        broadcast.putExtra("callingUid", android.os.Binder.getCallingUid());
-        broadcast.putStringArrayListExtra("parts", parts);
-        broadcast.putParcelableArrayListExtra("sentIntents", sentIntents);
-        broadcast.putParcelableArrayListExtra("deliveryIntents", deliveryIntents);
-        broadcast.putExtra("priority", priority);
-        broadcast.putExtra("isExpectMore", isExpectMore);
-        broadcast.putExtra("validityPeriod", validityPeriod);
-
-        if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
-            log("Broadcasting sms destAddr: " + destAddr +
-                    "\n scAddr= " + scAddr +
-                    "\n subId= " + subId +
-                    "\n multipart= " + multipart +
-                    "\n callingPackager= " + callingPackage +
-                    "\n callingUid= " + android.os.Binder.getCallingUid() +
-                    "\n parts= " + parts.size() +
-                    "\n sentIntents= " + sentIntents.size() +
-                    "\n deliveryIntents= " + deliveryIntents.size() +
-                    "\n priority= " + priority +
-                    "\n isExpectMore= " + isExpectMore +
-                    "\n validityPeriod= " + validityPeriod);
-        }
-        mContext.sendOrderedBroadcastAsUser(broadcast, UserHandle.OWNER,
-                android.Manifest.permission.INTERCEPT_SMS,
-                mReceiver, null, Activity.RESULT_OK, destAddr, null);
     }
 
     public boolean
     updateMessageOnIccEf(String callingPackage, int index, int status, byte[] pdu)
             throws android.os.RemoteException {
-        return  updateMessageOnIccEfForSubscriber(getDefaultSmsSubId(), callingPackage,
+        return  updateMessageOnIccEfForSubscriber(getPreferredSmsSubscription(), callingPackage,
                 index, status, pdu);
     }
 
@@ -225,7 +80,7 @@ public class UiccSmsController extends ISms.Stub {
 
     public boolean copyMessageToIccEf(String callingPackage, int status, byte[] pdu, byte[] smsc)
             throws android.os.RemoteException {
-        return copyMessageToIccEfForSubscriber(getDefaultSmsSubId(), callingPackage, status,
+        return copyMessageToIccEfForSubscriber(getPreferredSmsSubscription(), callingPackage, status,
                 pdu, smsc);
     }
 
@@ -243,7 +98,7 @@ public class UiccSmsController extends ISms.Stub {
 
     public List<SmsRawData> getAllMessagesFromIccEf(String callingPackage)
             throws android.os.RemoteException {
-        return getAllMessagesFromIccEfForSubscriber(getDefaultSmsSubId(), callingPackage);
+        return getAllMessagesFromIccEfForSubscriber(getPreferredSmsSubscription(), callingPackage);
     }
 
     public List<SmsRawData> getAllMessagesFromIccEfForSubscriber(int subId, String callingPackage)
@@ -260,7 +115,7 @@ public class UiccSmsController extends ISms.Stub {
 
     public void sendData(String callingPackage, String destAddr, String scAddr, int destPort,
             byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent) {
-         sendDataForSubscriber(getDefaultSmsSubId(), callingPackage, destAddr, scAddr,
+         sendDataForSubscriber(getPreferredSmsSubscription(), callingPackage, destAddr, scAddr,
                  destPort, data, sentIntent, deliveryIntent);
     }
 
@@ -277,65 +132,28 @@ public class UiccSmsController extends ISms.Stub {
         }
     }
 
-    public void sendDataWithOrigPort(String callingPackage, String destAddr, String scAddr,
-            int destPort, int origPort, byte[] data, PendingIntent sentIntent,
-            PendingIntent deliveryIntent) {
-         sendDataWithOrigPortUsingSubscriber(getDefaultSmsSubId(), callingPackage, destAddr,
-                 scAddr, destPort, origPort, data, sentIntent, deliveryIntent);
-    }
-
-    public void sendDataWithOrigPortUsingSubscriber(int subId, String callingPackage,
-            String destAddr, String scAddr, int destPort, int origPort, byte[] data,
-            PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
-        if (iccSmsIntMgr != null) {
-            iccSmsIntMgr.sendDataWithOrigPort(callingPackage, destAddr, scAddr, destPort,
-                    origPort, data, sentIntent, deliveryIntent);
-        } else {
-            Rlog.e(LOG_TAG,"sendTextWithOrigPort iccSmsIntMgr is null for" +
-                          " Subscription: " + subId);
-        }
-    }
-
     public void sendText(String callingPackage, String destAddr, String scAddr,
             String text, PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        sendTextForSubscriber(getDefaultSmsSubId(), callingPackage, destAddr, scAddr,
+        sendTextForSubscriber(getPreferredSmsSubscription(), callingPackage, destAddr, scAddr,
             text, sentIntent, deliveryIntent);
     }
 
     public void sendTextForSubscriber(int subId, String callingPackage, String destAddr,
             String scAddr, String text, PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        sendTextWithOptionsUsingSubscriber(subId, callingPackage, destAddr, scAddr, text,
-                sentIntent, deliveryIntent, -1, false, -1);
-    }
-
-    public void sendTextWithOptionsUsingSubscriber(int subId, String callingPackage,
-            String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, int priority, boolean isExpectMore,
-            int validityPeriod) {
-        mContext.enforceCallingPermission(
-                android.Manifest.permission.SEND_SMS,
-                "Sending SMS message");
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
-        if (iccSmsIntMgr.isShortSMSCode(destAddr)) {
-            iccSmsIntMgr.sendTextWithOptions(callingPackage, destAddr, scAddr, text,
-                    sentIntent, deliveryIntent, priority, isExpectMore, validityPeriod);
-            return;
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendText(callingPackage, destAddr, scAddr, text, sentIntent,
+                    deliveryIntent);
+        } else {
+            Rlog.e(LOG_TAG,"sendText iccSmsIntMgr is null for" +
+                          " Subscription: " + subId);
         }
-        ArrayList<String> parts = new ArrayList<String>();
-        parts.add(text);
-        ArrayList<PendingIntent> sentIntents = new ArrayList<PendingIntent>();
-        sentIntents.add(sentIntent);
-        ArrayList<PendingIntent> deliveryIntents = new ArrayList<PendingIntent>();
-        deliveryIntents.add(deliveryIntent);
-        broadcastOutgoingSms(subId, callingPackage, destAddr, scAddr, false, parts, sentIntents,
-                deliveryIntents, priority, isExpectMore, validityPeriod);
     }
 
     public void sendMultipartText(String callingPackage, String destAddr, String scAddr,
             List<String> parts, List<PendingIntent> sentIntents,
             List<PendingIntent> deliveryIntents) throws android.os.RemoteException {
-         sendMultipartTextForSubscriber(getDefaultSmsSubId(), callingPackage, destAddr,
+         sendMultipartTextForSubscriber(getPreferredSmsSubscription(), callingPackage, destAddr,
                  scAddr, parts, sentIntents, deliveryIntents);
     }
 
@@ -343,53 +161,36 @@ public class UiccSmsController extends ISms.Stub {
             String scAddr, List<String> parts, List<PendingIntent> sentIntents,
             List<PendingIntent> deliveryIntents)
             throws android.os.RemoteException {
-        sendMultipartTextWithOptionsUsingSubscriber(subId, callingPackage, destAddr,
-                scAddr, parts, sentIntents, deliveryIntents, -1, false, -1);
-    }
-
-    public void sendMultipartTextWithOptionsUsingSubscriber(int subId, String callingPackage,
-            String destAddr, String scAddr, List<String> parts, List<PendingIntent> sentIntents,
-            List<PendingIntent> deliveryIntents, int priority, boolean isExpectMore,
-            int validityPeriod) {
-        mContext.enforceCallingPermission(
-                android.Manifest.permission.SEND_SMS,
-                "Sending SMS message");
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
-        if (iccSmsIntMgr.isShortSMSCode(destAddr)) {
-            iccSmsIntMgr.sendMultipartTextWithOptions(callingPackage, destAddr,
-                    scAddr, parts, sentIntents, deliveryIntents, -1, false, -1);
-            return;
+        if (iccSmsIntMgr != null ) {
+            iccSmsIntMgr.sendMultipartText(callingPackage, destAddr, scAddr, parts, sentIntents,
+                    deliveryIntents);
+        } else {
+            Rlog.e(LOG_TAG,"sendMultipartText iccSmsIntMgr is null for" +
+                          " Subscription: " + subId);
         }
-        broadcastOutgoingSms(subId, callingPackage, destAddr, scAddr, true,
-                parts != null ? new ArrayList<String>(parts) : null,
-                sentIntents != null ? new ArrayList<PendingIntent>(sentIntents) : null,
-                deliveryIntents != null ? new ArrayList<PendingIntent>(deliveryIntents) : null,
-                -1, false, -1);
     }
 
-    public boolean enableCellBroadcast(int messageIdentifier, int ranType)
-            throws android.os.RemoteException {
-        return enableCellBroadcastForSubscriber(getPreferredSmsSubscription(), messageIdentifier,
-                ranType);
+    public boolean enableCellBroadcast(int messageIdentifier) throws android.os.RemoteException {
+        return enableCellBroadcastForSubscriber(getPreferredSmsSubscription(), messageIdentifier);
     }
 
-    public boolean enableCellBroadcastForSubscriber(int subId, int messageIdentifier, int ranType)
+    public boolean enableCellBroadcastForSubscriber(int subId, int messageIdentifier)
                 throws android.os.RemoteException {
-        return enableCellBroadcastRangeForSubscriber(subId, messageIdentifier, messageIdentifier,
-                ranType);
+        return enableCellBroadcastRangeForSubscriber(subId, messageIdentifier, messageIdentifier);
     }
 
-    public boolean enableCellBroadcastRange(int startMessageId, int endMessageId, int ranType)
+    public boolean enableCellBroadcastRange(int startMessageId, int endMessageId)
             throws android.os.RemoteException {
         return enableCellBroadcastRangeForSubscriber(getPreferredSmsSubscription(), startMessageId,
-                endMessageId, ranType);
+                endMessageId);
     }
 
     public boolean enableCellBroadcastRangeForSubscriber(int subId, int startMessageId,
-            int endMessageId, int ranType) throws android.os.RemoteException {
+            int endMessageId) throws android.os.RemoteException {
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
         if (iccSmsIntMgr != null ) {
-            return iccSmsIntMgr.enableCellBroadcastRange(startMessageId, endMessageId, ranType);
+            return iccSmsIntMgr.enableCellBroadcastRange(startMessageId, endMessageId);
         } else {
             Rlog.e(LOG_TAG,"enableCellBroadcast iccSmsIntMgr is null for" +
                           " Subscription: " + subId);
@@ -397,29 +198,26 @@ public class UiccSmsController extends ISms.Stub {
         return false;
     }
 
-    public boolean disableCellBroadcast(int messageIdentifier, int ranType)
-            throws android.os.RemoteException {
-        return disableCellBroadcastForSubscriber(getPreferredSmsSubscription(), messageIdentifier,
-                ranType);
+    public boolean disableCellBroadcast(int messageIdentifier) throws android.os.RemoteException {
+        return disableCellBroadcastForSubscriber(getPreferredSmsSubscription(), messageIdentifier);
     }
 
-    public boolean disableCellBroadcastForSubscriber(int subId, int messageIdentifier, int ranType)
+    public boolean disableCellBroadcastForSubscriber(int subId, int messageIdentifier)
                 throws android.os.RemoteException {
-        return disableCellBroadcastRangeForSubscriber(subId, messageIdentifier, messageIdentifier,
-                ranType);
+        return disableCellBroadcastRangeForSubscriber(subId, messageIdentifier, messageIdentifier);
     }
 
-    public boolean disableCellBroadcastRange(int startMessageId, int endMessageId, int ranType)
+    public boolean disableCellBroadcastRange(int startMessageId, int endMessageId)
             throws android.os.RemoteException {
         return disableCellBroadcastRangeForSubscriber(getPreferredSmsSubscription(), startMessageId,
-                endMessageId, ranType);
+                endMessageId);
     }
 
     public boolean disableCellBroadcastRangeForSubscriber(int subId, int startMessageId,
-            int endMessageId, int ranType) throws android.os.RemoteException {
+            int endMessageId) throws android.os.RemoteException {
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
         if (iccSmsIntMgr != null ) {
-            return iccSmsIntMgr.disableCellBroadcastRange(startMessageId, endMessageId, ranType);
+            return iccSmsIntMgr.disableCellBroadcastRange(startMessageId, endMessageId);
         } else {
             Rlog.e(LOG_TAG,"disableCellBroadcast iccSmsIntMgr is null for" +
                           " Subscription:"+subId);
@@ -428,7 +226,7 @@ public class UiccSmsController extends ISms.Stub {
     }
 
     public int getPremiumSmsPermission(String packageName) {
-        return getPremiumSmsPermissionForSubscriber(getDefaultSmsSubId(), packageName);
+        return getPremiumSmsPermissionForSubscriber(getPreferredSmsSubscription(), packageName);
     }
 
     @Override
@@ -444,7 +242,7 @@ public class UiccSmsController extends ISms.Stub {
     }
 
     public void setPremiumSmsPermission(String packageName, int permission) {
-         setPremiumSmsPermissionForSubscriber(getDefaultSmsSubId(), packageName, permission);
+         setPremiumSmsPermissionForSubscriber(getPreferredSmsSubscription(), packageName, permission);
     }
 
     @Override
@@ -458,7 +256,7 @@ public class UiccSmsController extends ISms.Stub {
     }
 
     public boolean isImsSmsSupported() {
-        return isImsSmsSupportedForSubscriber(getDefaultSmsSubId());
+        return isImsSmsSupportedForSubscriber(getPreferredSmsSubscription());
     }
 
     @Override
@@ -472,41 +270,8 @@ public class UiccSmsController extends ISms.Stub {
         return false;
     }
 
-    @Override
-    public boolean isSmsSimPickActivityNeeded(int subId) {
-        final Context context = ActivityThread.currentApplication().getApplicationContext();
-        TelephonyManager telephonyManager =
-                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
-        List<SubscriptionInfo> subInfoList;
-        final long identity = Binder.clearCallingIdentity();
-        try {
-            subInfoList = SubscriptionManager.from(context).getActiveSubscriptionInfoList();
-        } finally {
-            Binder.restoreCallingIdentity(identity);
-        }
-
-        if (subInfoList != null) {
-            final int subInfoLength = subInfoList.size();
-
-            for (int i = 0; i < subInfoLength; ++i) {
-                final SubscriptionInfo sir = subInfoList.get(i);
-                if (sir != null && sir.getSubscriptionId() == subId) {
-                    // The subscription id is valid, sms sim pick activity not needed
-                    return false;
-                }
-            }
-
-            // If reached here and multiple SIMs and subs present, sms sim pick activity is needed
-            if (subInfoLength > 0 && telephonyManager.getSimCount() > 1) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public String getImsSmsFormat() {
-        return getImsSmsFormatForSubscriber(getDefaultSmsSubId());
+        return getImsSmsFormatForSubscriber(getPreferredSmsSubscription());
     }
 
     @Override
@@ -521,6 +286,12 @@ public class UiccSmsController extends ISms.Stub {
     }
 
     @Override
+    public void updateSmsSendStatus(int messageRef, boolean success) {
+        getIccSmsInterfaceManager(SubscriptionManager.getDefaultSmsSubId())
+            .updateSmsSendStatus(messageRef, success);
+    }
+
+    @Override
     public void injectSmsPdu(byte[] pdu, String format, PendingIntent receivedIntent) {
         injectSmsPdu(SubscriptionManager.getDefaultSmsSubId(), pdu, format, receivedIntent);
     }
@@ -530,20 +301,6 @@ public class UiccSmsController extends ISms.Stub {
         getIccSmsInterfaceManager(subId).injectSmsPdu(pdu, format, receivedIntent);
     }
 
-    @Override
-    public void synthesizeMessages(String originatingAddress,
-            String scAddress, List<String> messages, long timestampMillis) throws RemoteException {
-        mContext.enforceCallingPermission(
-                android.Manifest.permission.BROADCAST_SMS, "");
-        byte[][] pdus = new byte[messages.size()][];
-        for (int i = 0; i < messages.size(); i++) {
-            SyntheticSmsMessage message = new SyntheticSmsMessage(originatingAddress,
-                    scAddress, messages.get(i), timestampMillis);
-            pdus[i] = message.getPdu();
-        }
-        dispatchPdus(pdus);
-    }
-
     /**
      * get sms interface manager object based on subscription.
      **/
@@ -551,13 +308,13 @@ public class UiccSmsController extends ISms.Stub {
         int phoneId = SubscriptionController.getInstance().getPhoneId(subId) ;
         //Fixme: for multi-subscription case
         if (!SubscriptionManager.isValidPhoneId(phoneId)
-                || phoneId == SubscriptionManager.DEFAULT_PHONE_INDEX) {
+                || phoneId == SubscriptionManager.DEFAULT_PHONE_ID) {
             phoneId = 0;
         }
 
         try {
             return (IccSmsInterfaceManager)
-                ((PhoneProxy)mPhone[phoneId]).getIccSmsInterfaceManager();
+                ((PhoneProxy)mPhone[(int)phoneId]).getIccSmsInterfaceManager();
         } catch (NullPointerException e) {
             Rlog.e(LOG_TAG, "Exception is :"+e.toString()+" For subscription :"+subId );
             e.printStackTrace(); //This will print stact trace
@@ -569,14 +326,10 @@ public class UiccSmsController extends ISms.Stub {
         }
     }
 
-    private int getDefaultSmsSubId() {
-        return  SubscriptionController.getInstance().getDefaultSmsSubId();
-    }
-
     /**
        Gets User preferred SMS subscription */
     public int getPreferredSmsSubscription() {
-        return  SubscriptionController.getInstance().getDefaultSmsSubId();
+        return  SubscriptionManager.getDefaultSmsSubId();
     }
 
     /**
@@ -612,46 +365,526 @@ public class UiccSmsController extends ISms.Stub {
         }
     }
 
+    // MTK-START
     /**
-     * Get the capacity count of sms on Icc card.
-     **/
-    public int getSmsCapacityOnIccForSubscriber(int subId)
-            throws android.os.RemoteException {
-       IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
-
-        if (iccSmsIntMgr != null ) {
-            return iccSmsIntMgr.getSmsCapacityOnIcc();
+     * Retrieves all messages currently stored on ICC based on different mode.
+     * Ex. CDMA mode or GSM mode for international cards.
+     * @param subId the subId id.
+     * @param callingPackage the calling packages
+     * @param mode the GSM mode or CDMA mode
+     *
+     * @return list of SmsRawData of all sms on ICC
+     */
+    public List<SmsRawData> getAllMessagesFromIccEfByModeForSubscriber(int subId,
+            String callingPackage, int mode) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.getAllMessagesFromIccEfByMode(callingPackage, mode);
         } else {
-            Rlog.e(LOG_TAG, "iccSmsIntMgr is null for " + " subId: " + subId);
-            return -1;
+            Rlog.e(LOG_TAG, "getAllMessagesFromIccEfByModeForSubscriber iccSmsIntMgr is null for" +
+                          " Subscription: " + subId);
+        }
+        return null;
+    }
+
+    /**
+     * Copy a text SMS to the ICC.
+     *
+     * @param subId subscription identity
+     * @param callingPackage the calling packages
+     * @param scAddress Service center address
+     * @param address   Destination address or original address
+     * @param text      List of message text
+     * @param status    message status (STATUS_ON_ICC_READ, STATUS_ON_ICC_UNREAD,
+     *                  STATUS_ON_ICC_SENT, STATUS_ON_ICC_UNSENT)
+     * @param timestamp Timestamp when service center receive the message
+     * @return success or not
+     *
+     */
+    public int copyTextMessageToIccCardForSubscriber(int subId, String callingPackage,
+            String scAddress, String address, List<String> text, int status, long timestamp) {
+        int result = RESULT_ERROR_GENERIC_FAILURE;
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            result = iccSmsIntMgr.copyTextMessageToIccCard(callingPackage, scAddress, address, text,
+                    status, timestamp);
+        } else {
+            Rlog.e(LOG_TAG, "sendStoredMultipartText iccSmsIntMgr is null for subscription: "
+                    + subId);
+        }
+
+        return result;
+    }
+
+    /**
+     * Send a data message with original port
+     *
+     * @param subId subscription identity
+     * @param callingPackage the calling packages
+     * @param destAddr the destination address
+     * @param scAddr the SMSC to send the message through, or NULL for the
+     *  default SMSC
+     * @param destPort destination port
+     * @param originalPort origianl sender port
+     * @param data the body of the message to send
+     * @param sentIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is sucessfully sent, or failed.
+     *  The result code will be <code>Activity.RESULT_OK<code> for success,
+     *  or one of these errors:<br>
+     *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
+     *  <code>RESULT_ERROR_RADIO_OFF</code><br>
+     *  <code>RESULT_ERROR_NULL_PDU</code><br>
+     *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> the sentIntent may include
+     *  the extra "errorCode" containing a radio technology specific value,
+     *  generally only useful for troubleshooting.<br>
+     *  The per-application based SMS control checks sentIntent. If sentIntent
+     *  is NULL the caller will be checked against all unknown applicaitons,
+     *  which cause smaller number of SMS to be sent in checking period.
+     * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is delivered to the recipient.  The
+     *  raw pdu of the status report is in the extended data ("pdu").
+     */
+    public void sendDataWithOriginalPortForSubscriber(int subId, String callingPackage,
+            String destAddr, String scAddr, int destPort, int originalPort, byte[] data,
+            PendingIntent sentIntent, PendingIntent deliveryIntent) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendDataWithOriginalPort(callingPackage, destAddr, scAddr, destPort,
+                    originalPort, data, sentIntent, deliveryIntent);
+        } else {
+            Rlog.e(LOG_TAG, "sendDataWithOriginalPortForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
         }
     }
 
-    public String getSmscAddressFromIccForSubscriber(int subId)
-            throws RemoteException {
+    /**
+     * Judge if SMS subsystem is ready or not
+     *
+     * @param subId subscription identity
+     *
+     * @return true for success
+     */
+    public boolean isSmsReadyForSubscriber(int subId) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.isSmsReady();
+        } else {
+            Rlog.e(LOG_TAG, "isSmsReady iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Set the memory storage status of the SMS
+     * This function is used for FTA test only
+     *
+     * @param subId subscription identity
+     * @param status false for storage full, true for storage available
+     *
+     */
+    public void setSmsMemoryStatusForSubscriber(int subId, boolean status) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.setSmsMemoryStatus(status);
+        } else {
+            Rlog.e(LOG_TAG, "setSmsMemoryStatus iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+    }
+
+    /**
+     * Get SMS SIM Card memory's total and used number
+     *
+     * @param subId subscription identity
+     * @param callingPackage the calling packages
+     *
+     * @return <code>IccSmsStorageStatus</code> object
+     */
+    public IccSmsStorageStatus getSmsSimMemoryStatusForSubscriber(int subId,
+            String callingPackage) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.getSmsSimMemoryStatus(callingPackage);
+        } else {
+            Rlog.e(LOG_TAG, "setSmsMemoryStatus iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return null;
+    }
+
+    /**
+     * Send an SMS with specified encoding type.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param destAddr the address to send the message to
+     * @param scAddr the SMSC to send the message through, or NULL for the
+     *  default SMSC
+     * @param text the body of the message to send
+     * @param encodingType the encoding type of content of message(GSM 7-bit, Unicode or Automatic)
+     * @param sentIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is sucessfully sent, or failed.
+     *  The result code will be <code>Activity.RESULT_OK<code> for success,
+     *  or one of these errors:<br>
+     *  <code>RESULT_ERROR_GENERIC_FAILURE</code><br>
+     *  <code>RESULT_ERROR_RADIO_OFF</code><br>
+     *  <code>RESULT_ERROR_NULL_PDU</code><br>
+     *  For <code>RESULT_ERROR_GENERIC_FAILURE</code> the sentIntent may include
+     *  the extra "errorCode" containing a radio technology specific value,
+     *  generally only useful for troubleshooting.<br>
+     *  The per-application based SMS control checks sentIntent. If sentIntent
+     *  is NULL the caller will be checked against all unknown applications,
+     *  which cause smaller number of SMS to be sent in checking period.
+     * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is delivered to the recipient.  The
+     *  raw pdu of the status report is in the extended data ("pdu").
+     */
+    public void sendTextWithEncodingTypeForSubscriber(int subId, String callingPackage,
+            String destAddr, String scAddr, String text, int encodingType, PendingIntent sentIntent,
+            PendingIntent deliveryIntent) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendTextWithEncodingType(callingPackage, destAddr, scAddr, text,
+                    encodingType, sentIntent, deliveryIntent);
+        } else {
+            Rlog.e(LOG_TAG, "sendTextWithEncodingTypeForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+    }
+
+    /**
+     * Send a multi-part text based SMS with specified encoding type.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param destAddr the address to send the message to
+     * @param scAddr is the service center address or null to use
+     *   the current default SMSC
+     * @param parts an <code>ArrayList</code> of strings that, in order,
+     *   comprise the original message
+     * @param encodingType the encoding type of content of message(GSM 7-bit, Unicode or Automatic)
+     * @param sentIntents if not null, an <code>ArrayList</code> of
+     *   <code>PendingIntent</code>s (one for each message part) that is
+     *   broadcast when the corresponding message part has been sent.
+     *   The result code will be <code>Activity.RESULT_OK<code> for success,
+     *   or one of these errors:
+     *   <code>RESULT_ERROR_GENERIC_FAILURE</code>
+     *   <code>RESULT_ERROR_RADIO_OFF</code>
+     *   <code>RESULT_ERROR_NULL_PDU</code>.
+     * @param deliveryIntents if not null, an <code>ArrayList</code> of
+     *   <code>PendingIntent</code>s (one for each message part) that is
+     *   broadcast when the corresponding message part has been delivered
+     *   to the recipient.  The raw pdu of the status report is in the
+     *   extended data ("pdu").
+     */
+    public void sendMultipartTextWithEncodingTypeForSubscriber(int subId, String callingPackage,
+            String destAddr, String scAddr, List<String> parts, int encodingType,
+            List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendMultipartTextWithEncodingType(callingPackage, destAddr, scAddr, parts,
+                    encodingType, sentIntents, deliveryIntents);
+        } else {
+            Rlog.e(LOG_TAG, "sendMultipartTextWithEncodingTypeForSubscriber iccSmsIntMgr is null"
+                     + " for subscription: " + subId);
+        }
+    }
+
+    /**
+     * Copy a text SMS to the ICC.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param scAddress Service center address
+     * @param address   Destination address or original address
+     * @param text      List of message text
+     * @param status    message status (STATUS_ON_ICC_READ, STATUS_ON_ICC_UNREAD,
+     *                  STATUS_ON_ICC_SENT, STATUS_ON_ICC_UNSENT)
+     * @param timestamp Timestamp when service center receive the message
+     * @return SimSmsInsertStatus
+     *
+     */
+    public SimSmsInsertStatus insertTextMessageToIccCardForSubscriber(int subId,
+            String callingPackage, String scAddress, String address, List<String> text, int status,
+            long timestamp) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.insertTextMessageToIccCard(callingPackage, scAddress, address, text,
+                    status, timestamp);
+        } else {
+            Rlog.e(LOG_TAG, "sendMultipartTextWithEncodingTypeForSubscriber iccSmsIntMgr is null"
+                    + " for subscription: " + subId);
+        }
+
+        return null;
+    }
+
+    /**
+     * Copy a raw SMS PDU to the ICC.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param status message status (STATUS_ON_ICC_READ, STATUS_ON_ICC_UNREAD,
+     *               STATUS_ON_ICC_SENT, STATUS_ON_ICC_UNSENT)
+     * @param pdu the raw PDU to store
+     * @param smsc encoded smsc service center
+     * @return SimSmsInsertStatus
+     *
+     */
+    public SimSmsInsertStatus insertRawMessageToIccCardForSubscriber(int subId,
+            String callingPackage, int status, byte[] pdu, byte[] smsc) {
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
 
-        if (iccSmsIntMgr != null ) {
-            return iccSmsIntMgr.getSmscAddressFromIcc();
+        SimSmsInsertStatus ret = null;
+        if (iccSmsIntMgr != null) {
+            ret = iccSmsIntMgr.insertRawMessageToIccCard(callingPackage, status, pdu, smsc);
         } else {
-            Rlog.e(LOG_TAG, "iccSmsIntMgr is null for " + " subId: " + subId);
-            return null;
+            Rlog.e(LOG_TAG, "insertRawMessageToIccCardForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
         }
+
+        return ret;
     }
 
-    public boolean setSmscAddressToIccForSubscriber(int subId, String scAdress)
-            throws RemoteException {
+    /**
+     * Send an SMS with specified encoding type.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param destAddr the address to send the message to
+     * @param scAddr the SMSC to send the message through, or NULL for the
+     *  default SMSC
+     * @param text the body of the message to send
+     * @param extraParams extra parameters, such as validity period, encoding type
+     * @param sentIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is sucessfully sent, or failed.
+     * @param deliveryIntent if not NULL this <code>PendingIntent</code> is
+     *  broadcast when the message is delivered to the recipient.  The
+     *  raw pdu of the status report is in the extended data ("pdu").
+     */
+    public void sendTextWithExtraParamsForSubscriber(int subId, String callingPackage,
+            String destAddr, String scAddr, String text, Bundle extraParams,
+            PendingIntent sentIntent, PendingIntent deliveryIntent) {
         IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
-
-        if (iccSmsIntMgr != null ) {
-            return iccSmsIntMgr.setSmscAddressToIcc(scAdress);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendTextWithExtraParams(callingPackage, destAddr, scAddr, text,
+                    extraParams, sentIntent, deliveryIntent);
         } else {
-            Rlog.e(LOG_TAG, "iccSmsIntMgr is null for " + " subId: " + subId);
-            return false;
+            Rlog.e(LOG_TAG, "sendTextWithExtraParamsForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
         }
     }
 
-    protected void log(String msg) {
-        Log.d(LOG_TAG, "[UiccSmsController] " + msg);
+    /**
+     * Send a multi-part text based SMS with specified encoding type.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param destAddr the address to send the message to
+     * @param scAddr is the service center address or null to use
+     *   the current default SMSC
+     * @param parts an <code>ArrayList</code> of strings that, in order,
+     *   comprise the original message
+     * @param extraParams extra parameters, such as validity period, encoding type
+     * @param sentIntents if not null, an <code>ArrayList</code> of
+     *   <code>PendingIntent</code>s (one for each message part) that is
+     *   broadcast when the corresponding message part has been sent.
+     * @param deliveryIntents if not null, an <code>ArrayList</code> of
+     *   <code>PendingIntent</code>s (one for each message part) that is
+     *   broadcast when the corresponding message part has been delivered
+     *   to the recipient.  The raw pdu of the status report is in the
+     *   extended data ("pdu").
+     */
+    public void sendMultipartTextWithExtraParamsForSubscriber(int subId, String callingPackage,
+            String destAddr, String scAddr, List<String> parts, Bundle extraParams,
+            List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            iccSmsIntMgr.sendMultipartTextWithExtraParams(callingPackage, destAddr, scAddr, parts,
+                    extraParams, sentIntents, deliveryIntents);
+        } else {
+            Rlog.e(LOG_TAG, "sendTextWithExtraParamsForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
     }
+
+    /*
+     * Get sms parameters from EFsmsp, such as the validity period & its format,
+     * protocol identifier and decode char set value
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     */
+    public SmsParameters getSmsParametersForSubscriber(int subId, String callingPackage) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.getSmsParameters(callingPackage);
+        } else {
+            Rlog.e(LOG_TAG, "getSmsParametersForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return null;
+    }
+
+    /*
+     * Save sms parameters into EFsmsp
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param params sms EFsmsp values
+     */
+    public boolean setSmsParametersForSubscriber(int subId, String callingPackage,
+            SmsParameters params) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.setSmsParameters(callingPackage, params);
+        } else {
+            Rlog.e(LOG_TAG, "setSmsParametersForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Retrieves message currently stored on ICC by index.
+     *
+     * @param subId subscriptioni identity
+     * @param callingPackage the calling packages
+     * @param index the index of sms save in EFsms
+     *
+     * @return SmsRawData of sms on ICC
+     */
+    public SmsRawData getMessageFromIccEfForSubscriber(int subId, String callingPackage,
+            int index) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.getMessageFromIccEf(callingPackage, index);
+        } else {
+            Rlog.e(LOG_TAG, "getMessageFromIccEfForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the cell broadcast config.
+     *
+     * @param subId subscriptioni identity
+     *
+     * @return Cell broadcast config.
+     */
+    public SmsCbConfigInfo[] getCellBroadcastSmsConfigForSubscriber(int subId) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.getCellBroadcastSmsConfig();
+        } else {
+            Rlog.e(LOG_TAG, "getCellBroadcastSmsConfigForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return null;
+    }
+
+    /**
+     * Set the cell broadcast config.
+     *
+     * @param subId subscriptioni identity
+     * @param channels the channels setting
+     * @param languages the language setting
+     *
+     * @return true if set successfully; false if set failed
+     */
+    public boolean setCellBroadcastSmsConfigForSubscriber(int subId,
+            SmsCbConfigInfo[] channels, SmsCbConfigInfo[] languages) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.setCellBroadcastSmsConfig(channels, languages);
+        } else {
+            Rlog.e(LOG_TAG, "setCellBroadcastSmsConfigForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Query the activation status of cell broadcast.
+     *
+     * @param subId subscriptioni identity
+     *
+     * @return true if activate; false if inactivate.
+     */
+    public boolean queryCellBroadcastSmsActivationForSubscriber(int subId) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.queryCellBroadcastSmsActivation();
+        } else {
+            Rlog.e(LOG_TAG, "setCellBroadcastSmsConfigForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Activate or deactivate cell broadcast SMS.
+     *
+     * @param subId subscriptioni identity
+     * @param activate 0 = activate, 1 = deactivate
+     *
+     * @return true if activate successfully; false if activate failed
+     */
+    public boolean activateCellBroadcastSmsForSubscriber(int subId, boolean activate) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.activateCellBroadcastSms(activate);
+        } else {
+            Rlog.e(LOG_TAG, "activateCellBroadcastSmsForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Remove specified channel and serial of cb message.
+     *
+     * @param subId subscriptioni identity
+     * @param channelId removed channel id
+     * @param serialId removed serial id
+     *
+     * @return true process successfully; false process failed.
+     *
+     * @hide
+     */
+    public boolean removeCellBroadcastMsgForSubscriber(int subId, int channelId, int serialId) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.removeCellBroadcastMsg(channelId, serialId);
+        } else {
+            Rlog.e(LOG_TAG, "removeCellBroadcastMsg iccSmsIntMgr is null for subscription: "
+                    + subId);
+        }
+
+        return false;
+    }
+
+    public boolean setEtwsConfigForSubscriber(int subId, int mode) {
+        IccSmsInterfaceManager iccSmsIntMgr = getIccSmsInterfaceManager(subId);
+        if (iccSmsIntMgr != null) {
+            return iccSmsIntMgr.setEtwsConfig(mode);
+        } else {
+            Rlog.e(LOG_TAG, "setEtwsConfigForSubscriber iccSmsIntMgr is null for" +
+                    "subscription: " + subId);
+        }
+
+        return false;
+    }
+    // MTK-END
 }

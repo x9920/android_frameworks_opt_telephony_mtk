@@ -42,13 +42,16 @@ import android.telephony.SmsManager;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
-import com.android.internal.R;
 import com.android.internal.content.PackageMonitor;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+
+// MTK-START
+// Open permission for special app to write sms DB
+// import com.mediatek.sms.SmsDbVisitor;
+// MTK-END
 
 /**
  * Class for managing the primary application that we will deliver SMS/MMS messages to
@@ -432,6 +435,30 @@ public final class SmsApplication {
                     applicationData = null;
                 }
 
+                // MTK-START
+                // Verify that the MTK special internal apps have permissions
+                // Get the db special visitor plug-in class
+				/*
+                String[] specialApps = SmsDbVisitor.getPackageNames();
+                if (specialApps != null) {
+                    for (int i = 0 ; i < specialApps.length ; i++) {
+                        try {
+                            PackageInfo info = packageManager.getPackageInfo(specialApps[i], 0);
+                            int mode = appOps.checkOp(AppOpsManager.OP_WRITE_SMS, info.applicationInfo.uid,
+                                    specialApps[i]);
+                            if (mode != AppOpsManager.MODE_ALLOWED) {
+                                Rlog.e(LOG_TAG, specialApps[i] + " lost OP_WRITE_SMS:  (fixing)");
+                                appOps.setMode(AppOpsManager.OP_WRITE_SMS, info.applicationInfo.uid,
+                                        specialApps[i], AppOpsManager.MODE_ALLOWED);
+                            }
+                        } catch (NameNotFoundException e) {
+                            // No internal app on this device
+                            Rlog.e(LOG_TAG, "Internal package not found: " + specialApps[i]);
+                        }
+                    }
+                }
+				*/
+                // MTK-END
             }
         }
         if (DEBUG_MULTIUSER) {
@@ -531,6 +558,26 @@ public final class SmsApplication {
                 // No phone app on this device (unexpected, even for non-phone devices)
                 Rlog.e(LOG_TAG, "MmsService package not found: " + MMS_SERVICE_PACKAGE_NAME);
             }
+
+            // MTK-START
+            // Verify that the MTK special internal apps have permissions
+            // Get the db special visitor plug-in class
+			/*
+            String[] specialApps = SmsDbVisitor.getPackageNames();
+            if (specialApps != null) {
+                for (int i = 0 ; i < specialApps.length ; i++) {
+                    try {
+                        PackageInfo info = packageManager.getPackageInfo(specialApps[i], 0);
+                        appOps.setMode(AppOpsManager.OP_WRITE_SMS, info.applicationInfo.uid,
+                                specialApps[i], AppOpsManager.MODE_ALLOWED);
+                    } catch (NameNotFoundException e) {
+                        // No internal app on this device
+                        Rlog.e(LOG_TAG, "Internal package not found: " + specialApps[i]);
+                    }
+                }
+            }
+			*/
+            // MTK-END
         }
     }
 
@@ -749,16 +796,25 @@ public final class SmsApplication {
             defaultSmsPackage = component.getPackageName();
         }
 
-        List<String> ignorePackages = Arrays.asList(
-                context.getResources().getStringArray(R.array.config_ignored_sms_packages));
-
-        if (ignorePackages.contains(packageName)) {
-            return false;
-        }
-
         if ((defaultSmsPackage == null || !defaultSmsPackage.equals(packageName)) &&
                 !packageName.equals(BLUETOOTH_PACKAGE_NAME)) {
             // To write the message for someone other than the default SMS and BT app
+
+            // MTK-START
+            // To write the message for someone other than the MTK internal special apps
+            // Get the db special visitor plug-in class
+			/*
+            String[] specialApps = SmsDbVisitor.getPackageNames();
+            if (specialApps != null) {
+                for (int i = 0 ; i < specialApps.length ; i++) {
+                    if (packageName == specialApps[i]) {
+                        return false;
+                    }
+                }
+            }
+			*/
+            // MTK-END
+
             return true;
         }
 

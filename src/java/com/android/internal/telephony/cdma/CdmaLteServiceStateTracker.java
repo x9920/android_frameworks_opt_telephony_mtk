@@ -24,10 +24,7 @@ import com.android.internal.telephony.uicc.RuimRecords;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.dataconnection.DcTrackerBase;
-import com.android.internal.telephony.PhoneConstants;
 
 import android.telephony.CellInfo;
 import android.telephony.CellInfoLte;
@@ -39,7 +36,6 @@ import android.telephony.cdma.CdmaCellLocation;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Message;
 import android.os.UserHandle;
 import android.os.SystemClock;
@@ -48,7 +44,6 @@ import android.os.SystemProperties;
 import android.telephony.Rlog;
 import android.util.EventLog;
 
-import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.dataconnection.DcTrackerBase;
 import com.android.internal.telephony.ProxyController;
 import android.telephony.SubscriptionManager;
@@ -63,7 +58,6 @@ import java.util.List;
 public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
     private CDMALTEPhone mCdmaLtePhone;
     private final CellInfoLte mCellInfoLte;
-    protected int mNewRilRadioTechnology = 0;
     private static final int EVENT_ALL_DATA_DISCONNECTED = 1001;
 
     private CellIdentityLte mNewCellIdentityLte = new CellIdentityLte();
@@ -72,19 +66,12 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
     public CdmaLteServiceStateTracker(CDMALTEPhone phone) {
         super(phone, new CellInfoLte());
         mCdmaLtePhone = phone;
-        mCdmaLtePhone.registerForSimRecordsLoaded(this, EVENT_SIM_RECORDS_LOADED, null);
         mCellInfoLte = (CellInfoLte) mCellInfo;
 
         ((CellInfoLte)mCellInfo).setCellSignalStrength(new CellSignalStrengthLte());
         ((CellInfoLte)mCellInfo).setCellIdentity(new CellIdentityLte());
 
         if (DBG) log("CdmaLteServiceStateTracker Constructors");
-    }
-
-    @Override
-    public void dispose() {
-        mPhone.unregisterForSimRecordsLoaded(this);
-        super.dispose();
     }
 
     @Override
@@ -126,9 +113,6 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
             // again to update to the roaming state with
             // the latest variables.
             pollState();
-            break;
-        case EVENT_SIM_RECORDS_LOADED:
-            updatePhoneObject();
             break;
         case EVENT_ALL_DATA_DISCONNECTED:
             int dds = SubscriptionManager.getDefaultDataSubId();
@@ -247,14 +231,11 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
             mNewSS.setRilDataRadioTechnology(type);
             int dataRegState = regCodeToServiceState(regState);
             mNewSS.setDataRegState(dataRegState);
-            // voice roaming state in done while handling EVENT_POLL_STATE_REGISTRATION_CDMA
-            mNewSS.setDataRoaming(regCodeIsRoaming(regState));
             if (DBG) {
                 log("handlPollStateResultMessage: CdmaLteSST setDataRegState=" + dataRegState
                         + " regState=" + regState
                         + " dataRadioTechnology=" + type);
             }
-            mDataRoaming = regCodeIsRoaming(regState);
         } else {
             super.handlePollStateResultMessage(what, ar);
         }
@@ -281,24 +262,8 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
                 setSignalStrengthDefaultValues();
                 mGotCountryCode = false;
 
-                if (!isIwlanFeatureAvailable()
-                    || (ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN
-                        != mSS.getRilDataRadioTechnology())) {
-                    pollStateDone();
-                }
-
-                /**
-                 * If iwlan feature is enabled then we do get
-                 * voice_network_change indication from RIL. At this moment we
-                 * dont know the current RAT since we are in Airplane mode.
-                 * We have to request for current registration state and hence
-                 * fallthrough to default case only if iwlan feature is
-                 * applicable.
-                 */
-                if (!isIwlanFeatureAvailable()) {
-                    /* fall-through */
-                    break;
-                }
+                pollStateDone();
+                break;
 
             default:
                 // Issue all poll-related commands at once, then count
@@ -324,37 +289,7 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
 
     @Override
     protected void pollStateDone() {
-        // Some older CDMA/LTE RILs only report VoiceRadioTechnology which results in network
-        // Unknown. In these cases return RilVoiceRadioTechnology for RilDataRadioTechnology.
-        boolean oldRil = mCi.needsOldRilFeature("usevoicetechfordata");
-        if (mNewSS.getDataRegState() != ServiceState.STATE_IN_SERVICE && oldRil) {
-            // LTE out of service, get CDMA Service State
-            mNewRilRadioTechnology = mNewSS.getRilVoiceRadioTechnology();
-            mNewSS.setDataRegState(radioTechnologyToDataServiceState(mNewRilRadioTechnology));
-            mNewSS.setRilDataRadioTechnology(mNewRilRadioTechnology);
-            log("pollStateDone CDMA STATE_IN_SERVICE mNewRilRadioTechnology = " +
-                    mNewRilRadioTechnology + " mNewSS.getDataRegState() = " +
-                    mNewSS.getDataRegState());
-        }
-
         log("pollStateDone: lte 1 ss=[" + mSS + "] newSS=[" + mNewSS + "]");
-
-        if (mPhone.isMccMncMarkedAsNonRoaming(mNewSS.getOperatorNumeric()) ||
-                mPhone.isSidMarkedAsNonRoaming(mNewSS.getSystemId())) {
-            log("pollStateDone: override - marked as non-roaming.");
-            mNewSS.setRoaming(false);
-            mNewSS.setCdmaEriIconIndex(EriInfo.ROAMING_INDICATOR_OFF);
-        } else if (mPhone.isMccMncMarkedAsRoaming(mNewSS.getOperatorNumeric()) ||
-                mPhone.isSidMarkedAsRoaming(mNewSS.getSystemId())) {
-            log("pollStateDone: override - marked as roaming.");
-            mNewSS.setRoaming(true);
-            mNewSS.setCdmaEriIconIndex(EriInfo.ROAMING_INDICATOR_ON);
-            mNewSS.setCdmaEriIconMode(EriInfo.ROAMING_ICON_MODE_NORMAL);
-        }
-
-        if (Build.IS_DEBUGGABLE && SystemProperties.getBoolean(PROP_FORCE_ROAMING, false)) {
-            mNewSS.setRoaming(true);
-        }
 
         useDataRegStateForDataOnlyDevices();
 
@@ -383,17 +318,11 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
 
         boolean hasChanged = !mNewSS.equals(mSS);
 
-        boolean hasVoiceRoamingOn = !mSS.getVoiceRoaming() && mNewSS.getVoiceRoaming();
+        boolean hasRoamingOn = !mSS.getRoaming() && mNewSS.getRoaming();
 
-        boolean hasVoiceRoamingOff = mSS.getVoiceRoaming() && !mNewSS.getVoiceRoaming();
-
-        boolean hasDataRoamingOn = !mSS.getDataRoaming() && mNewSS.getDataRoaming();
-
-        boolean hasDataRoamingOff = mSS.getDataRoaming() && !mNewSS.getDataRoaming();
+        boolean hasRoamingOff = mSS.getRoaming() && !mNewSS.getRoaming();
 
         boolean hasLocationChanged = !mNewCellLoc.equals(mCellLoc);
-
-        resetServiceStateInIwlanMode();
 
         boolean has4gHandoff =
                 mNewSS.getDataRegState() == ServiceState.STATE_IN_SERVICE &&
@@ -412,8 +341,6 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
             ((mNewSS.getRilDataRadioTechnology() >= ServiceState.RIL_RADIO_TECHNOLOGY_IS95A) &&
              (mNewSS.getRilDataRadioTechnology() <= ServiceState.RIL_RADIO_TECHNOLOGY_EVDO_A));
 
-        boolean needNotifyData = (mSS.getCssIndicator() != mNewSS.getCssIndicator());
-
         if (DBG) {
             log("pollStateDone:"
                 + " hasRegistered=" + hasRegistered
@@ -424,10 +351,8 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
                 + " hasVoiceRadioTechnologyChanged= " + hasVoiceRadioTechnologyChanged
                 + " hasDataRadioTechnologyChanged=" + hasDataRadioTechnologyChanged
                 + " hasChanged=" + hasChanged
-                + " hasVoiceRoamingOn=" + hasVoiceRoamingOn
-                + " hasVoiceRoamingOff=" + hasVoiceRoamingOff
-                + " hasDataRoamingOn=" + hasDataRoamingOn
-                + " hasDataRoamingOff=" + hasDataRoamingOff
+                + " hasRoamingOn=" + hasRoamingOn
+                + " hasRoamingOff=" + hasRoamingOff
                 + " hasLocationChanged=" + hasLocationChanged
                 + " has4gHandoff = " + has4gHandoff
                 + " hasMultiApnSupport=" + hasMultiApnSupport
@@ -460,12 +385,6 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
         if (hasDataRadioTechnologyChanged) {
             mPhone.setSystemProperty(TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE,
                     ServiceState.rilRadioTechnologyToString(mSS.getRilDataRadioTechnology()));
-
-            if (isIwlanFeatureAvailable()
-                    && (ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN
-                        == mSS.getRilDataRadioTechnology())) {
-                log("pollStateDone: IWLAN enabled");
-            }
         }
 
         if (hasRegistered) {
@@ -473,21 +392,13 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
         }
 
         if (hasChanged) {
-            boolean hasBrandOverride = mUiccController.getUiccCard(getPhoneId()) == null ? false :
-                    (mUiccController.getUiccCard(getPhoneId()).getOperatorBrandOverride() != null);
-            boolean forceEriFromXml =
-                    SystemProperties.getBoolean("ro.ril.force_eri_from_xml", false);
-            if (!hasBrandOverride && (mCi.getRadioState().isOn()) && (mPhone.isEriFileLoaded()) &&
-                    (mSS.getRilVoiceRadioTechnology() != ServiceState.RIL_RADIO_TECHNOLOGY_LTE ||
-                     mPhone.getContext().getResources().getBoolean(com.android.internal.R.
-                     bool.config_LTE_eri_for_network_name)) &&
-                     (!mIsSubscriptionFromRuim || forceEriFromXml)) {
-                // Only when CDMA is in service, ERI will take effect
-                String eriText = mSS.getOperatorAlphaLong();
+            boolean hasBrandOverride = mUiccController.getUiccCard() == null ? false :
+                    (mUiccController.getUiccCard().getOperatorBrandOverride() != null);
+            if (!hasBrandOverride && (mCi.getRadioState().isOn()) && (mPhone.isEriFileLoaded())) {
+                String eriText;
                 // Now the CDMAPhone sees the new ServiceState so it can get the
                 // new ERI text
-                if (mSS.getVoiceRegState() == ServiceState.STATE_IN_SERVICE ||
-                        (mSS.getDataRegState() == ServiceState.STATE_IN_SERVICE)) {
+                if (mSS.getVoiceRegState() == ServiceState.STATE_IN_SERVICE) {
                     eriText = mPhone.getCdmaEriText();
                 } else if (mSS.getVoiceRegState() == ServiceState.STATE_POWER_OFF) {
                     eriText = (mIccRecords != null) ? mIccRecords.getServiceProviderName() : null;
@@ -496,7 +407,7 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
                         // build-time system property
                         eriText = SystemProperties.get("ro.cdma.home.operator.alpha");
                     }
-                } else if (mSS.getDataRegState() != ServiceState.STATE_IN_SERVICE) {
+                } else {
                     // Note that ServiceState.STATE_OUT_OF_SERVICE is valid used
                     // for mRegistrationState 0,2,3 and 4
                     eriText = mPhone.getContext()
@@ -506,9 +417,9 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
             }
 
             if (mUiccApplcation != null && mUiccApplcation.getState() == AppState.APPSTATE_READY &&
-                    mIccRecords != null && (mSS.getVoiceRegState() == ServiceState.STATE_IN_SERVICE)) {
+                    mIccRecords != null) {
                 // SIM is found on the device. If ERI roaming is OFF, and SID/NID matches
-                // one configured in SIM, use operator name from CSIM record.
+                // one configured in SIM, use operator name  from CSIM record.
                 boolean showSpn =
                     ((RuimRecords)mIccRecords).getCsimSpnDisplayCondition();
                 int iconIndex = mSS.getCdmaEriIconIndex();
@@ -566,61 +477,31 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
             }
 
             mPhone.setSystemProperty(TelephonyProperties.PROPERTY_OPERATOR_ISROAMING,
-                    (mSS.getVoiceRoaming() || mSS.getDataRoaming()) ? "true" : "false");
+                    mSS.getRoaming() ? "true" : "false");
 
             updateSpnDisplay();
-            setRoamingType(mSS);
-            log("Broadcasting ServiceState : " + mSS);
             mPhone.notifyServiceStateChanged(mSS);
-        }
-
-        // First notify detached, then rat changed, then attached - that's the way it
-        // happens in the modem.
-        // Behavior of recipients (DcTracker, for instance) depends on this sequence
-        // since DcTracker reloads profiles on "rat_changed" notification and sets up
-        // data call on "attached" notification.
-        if (hasCdmaDataConnectionDetached) {
-            mDetachedRegistrants.notifyRegistrants();
-        }
-
-        if ((hasCdmaDataConnectionChanged || hasDataRadioTechnologyChanged)) {
-            notifyDataRegStateRilRadioTechnologyChanged();
-            if (isIwlanFeatureAvailable()
-                    && (ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN
-                        == mSS.getRilDataRadioTechnology())) {
-                mPhone.notifyDataConnection(Phone.REASON_IWLAN_AVAILABLE);
-                needNotifyData = false;
-                mIwlanRatAvailable = true;
-            } else {
-                processIwlanToWwanTransition(mSS);
-
-                needNotifyData = true;
-                mIwlanRatAvailable = false;
-            }
-        }
-
-        if (needNotifyData) {
-            mPhone.notifyDataConnection(null);
         }
 
         if (hasCdmaDataConnectionAttached || has4gHandoff) {
             mAttachedRegistrants.notifyRegistrants();
         }
 
-        if (hasVoiceRoamingOn) {
-            mVoiceRoamingOnRegistrants.notifyRegistrants();
+        if (hasCdmaDataConnectionDetached) {
+            mDetachedRegistrants.notifyRegistrants();
         }
 
-        if (hasVoiceRoamingOff) {
-            mVoiceRoamingOffRegistrants.notifyRegistrants();
+        if ((hasCdmaDataConnectionChanged || hasDataRadioTechnologyChanged)) {
+            notifyDataRegStateRilRadioTechnologyChanged();
+            mPhone.notifyDataConnection(null);
         }
 
-        if (hasDataRoamingOn) {
-            mDataRoamingOnRegistrants.notifyRegistrants();
+        if (hasRoamingOn) {
+            mRoamingOnRegistrants.notifyRegistrants();
         }
 
-        if (hasDataRoamingOff) {
-            mDataRoamingOffRegistrants.notifyRegistrants();
+        if (hasRoamingOff) {
+            mRoamingOffRegistrants.notifyRegistrants();
         }
 
         if (hasLocationChanged) {
@@ -754,8 +635,7 @@ public class CdmaLteServiceStateTracker extends CdmaServiceStateTracker {
                 if (dcTracker.isDisconnected()
                         && (dds == mPhone.getSubId()
                             || (dds != mPhone.getSubId()
-                                && ProxyController.getInstance().isDataDisconnected(dds))
-                            || !SubscriptionManager.isValidSubscriptionId(dds))) {
+                                && ProxyController.getInstance().isDataDisconnected(dds)))) {
                     // To minimize race conditions we do this after isDisconnected
                     dcTracker.cleanUpAllConnections(Phone.REASON_RADIO_TURNED_OFF);
                     if (DBG) log("Data disconnected, turn off radio right away.");

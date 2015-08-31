@@ -79,6 +79,18 @@ public class EncodedStringValue implements Cloneable {
         }
     }
 
+    /// M:Code analyze 001,add a new constructor @{
+    public EncodedStringValue(int charset, String data) {
+        try {
+            String charsetName = CharacterSets.getMimeName(charset);
+            mData = data.getBytes(charsetName);
+            mCharacterSet = charset;
+        } catch (UnsupportedEncodingException e) {
+            Log.e(TAG, "Default encoding must be supported.", e);
+        }
+    }
+    /// @}
+
     /**
      * Get Char-set value.
      *

@@ -178,6 +178,9 @@ public class PduHeaders {
     public static final int STATUS_INDETERMINATE            = 0x85;
     public static final int STATUS_FORWARDED                = 0x86;
     public static final int STATUS_UNREACHABLE              = 0x87;
+	public static final int STATUS_PRE_DOWNLOADING   		= 0x88;
+    // TransactionService will skip downloading Mms if auto-download is off
+    public static final int STATE_SKIP_RETRYING     		= 0x89;
 
     /**
      *  MM-Flags field type components.
@@ -399,6 +402,10 @@ public class PduHeaders {
                 }
                 break;
             case STATUS:
+                if ((value < STATUS_EXPIRED) || (value > STATE_SKIP_RETRYING)) {
+                    // Invalid value.
+                    throw new InvalidHeaderValueException("Invalid Octet value!");
+                }
                 break;
             case REPLY_CHARGING:
                 if ((value < REPLY_CHARGING_REQUESTED)
@@ -698,6 +705,7 @@ public class PduHeaders {
          */
         switch (field) {
             case DATE:
+            case DATE_SENT:
             case REPLY_CHARGING_SIZE:
             case MESSAGE_SIZE:
             case MESSAGE_COUNT:
@@ -714,4 +722,6 @@ public class PduHeaders {
         }
         mHeaderMap.put(field, value);
     }
+    /// M: add for saving sent time of received messages.
+    public static final int DATE_SENT                   = 0xC9;
 }

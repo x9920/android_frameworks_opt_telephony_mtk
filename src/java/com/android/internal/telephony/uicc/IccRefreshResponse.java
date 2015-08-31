@@ -27,6 +27,9 @@ public class IccRefreshResponse {
     public static final int REFRESH_RESULT_FILE_UPDATE = 0; /* Single file was updated */
     public static final int REFRESH_RESULT_INIT = 1;        /* The Icc has been initialized */
     public static final int REFRESH_RESULT_RESET = 2;       /* The Icc was reset */
+    public static final int REFRESH_RESULT_APP_INIT = 3; /* UICC APP reset, for wifi calling */
+    public static final int REFRESH_INIT_FULL_FILE_UPDATED = 4;  /* SIM init and full file upload */
+    public static final int REFRESH_INIT_FILE_UPDATED = 5;  /* SIM init and single file updated */
 
     public int             refreshResult;      /* Sim Refresh result */
     public int             efId;               /* EFID */

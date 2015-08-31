@@ -103,6 +103,7 @@ public final class HbpcdUtils {
                         return 0;
                 }
             }
+            c3.close();
         }
 
         // if there is no conflict, then check if SID is in mcc_sid_range.

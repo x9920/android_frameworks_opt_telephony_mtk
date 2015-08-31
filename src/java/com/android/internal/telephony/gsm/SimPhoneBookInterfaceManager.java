@@ -36,6 +36,9 @@ public class SimPhoneBookInterfaceManager extends IccPhoneBookInterfaceManager {
     public SimPhoneBookInterfaceManager(GSMPhone phone) {
         super(phone);
         //NOTE service "simphonebook" added by IccSmsInterfaceManagerProxy
+
+        logd("SimPhoneBookInterfaceManager has been created. (mAdnCache=" +
+                ((mAdnCache == null) ? "null" : "has been set."));
     }
 
     @Override

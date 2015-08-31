@@ -161,10 +161,11 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     /**
-     * SIP phones do not have a subscription id, so do not notify of specific phone state changes.
+     * Notify any interested party of a Phone state change
+     * {@link com.android.internal.telephony.PhoneConstants.State}
      */
     /* package */ void notifyPhoneStateChanged() {
-        // Do nothing.
+        mNotifier.notifyPhoneState(this);
     }
 
     /**

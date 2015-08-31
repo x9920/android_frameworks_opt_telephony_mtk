@@ -47,7 +47,6 @@ import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
 import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.IccCardStatus.PinState;
 import com.android.internal.telephony.cat.CatService;
-import com.android.internal.telephony.cat.CatServiceFactory;
 import com.android.internal.telephony.cdma.CDMALTEPhone;
 import com.android.internal.telephony.cdma.CDMAPhone;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
@@ -83,7 +82,6 @@ public class UiccCard {
     private boolean mDestroyed = false; //set to true once this card is commanded to be disposed of.
     private RadioState mLastRadioState =  RadioState.RADIO_UNAVAILABLE;
     private UiccCarrierPrivilegeRules mCarrierPrivilegeRules;
-    private UICCConfig mUICCConfig = null;
 
     private RegistrantList mAbsentRegistrants = new RegistrantList();
     private RegistrantList mCarrierPrivilegeRegistrants = new RegistrantList();
@@ -96,13 +94,31 @@ public class UiccCard {
     private static final int EVENT_TRANSMIT_APDU_BASIC_CHANNEL_DONE = 18;
     private static final int EVENT_SIM_IO_DONE = 19;
     private static final int EVENT_CARRIER_PRIVILIGES_LOADED = 20;
-    private static final int EVENT_SIM_GET_ATR_DONE = 21;
 
-    private int mPhoneId;
+    private static final int EVENT_GET_ATR_DONE = 100;
+    private static final int EVENT_OPEN_CHANNEL_WITH_SW_DONE = 101;
 
-    public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics, int phoneId) {
+    int mSlotId;
+
+    static final String[] UICCCARD_PROPERTY_RIL_UICC_TYPE = {
+        "gsm.ril.uicctype",
+        "gsm.ril.uicctype.2",
+        "gsm.ril.uicctype.3",
+        "gsm.ril.uicctype.4",
+    };
+
+    private String mIccType = null; /* Add for USIM detect */
+
+    public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics) {
+        if (DBG) log("Creating");
         mCardState = ics.mCardState;
-        mPhoneId = phoneId;
+        update(c, ci, ics);
+    }
+
+    public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics, int slotId) {
+        mCardState = ics.mCardState;
+        mSlotId = slotId;
+        if (DBG) log("Creating");
         update(c, ci, ics);
     }
 
@@ -112,7 +128,7 @@ public class UiccCard {
     public void dispose() {
         synchronized (mLock) {
             if (DBG) log("Disposing card");
-            if (mCatService != null) CatServiceFactory.disposeCatService(mPhoneId);
+            if (mCatService != null) mCatService.dispose();
             for (UiccCardApplication app : mUiccApplications) {
                 if (app != null) {
                     app.dispose();
@@ -121,7 +137,6 @@ public class UiccCard {
             mCatService = null;
             mUiccApplications = null;
             mCarrierPrivilegeRules = null;
-            mUICCConfig = null;
         }
     }
 
@@ -140,8 +155,6 @@ public class UiccCard {
             mContext = c;
             mCi = ci;
             //update applications
-            if (mUICCConfig == null)
-                mUICCConfig = new UICCConfig();
             if (DBG) log(ics.mApplications.length + " applications");
             for ( int i = 0; i < mUiccApplications.length; i++) {
                 if (mUiccApplications[i] == null) {
@@ -197,11 +210,13 @@ public class UiccCard {
         if (mUiccApplications.length > 0 && mUiccApplications[0] != null) {
             // Initialize or Reinitialize CatService
             if (mCatService == null) {
-                mCatService = CatServiceFactory.makeCatService(mCi, mContext, this, mPhoneId);
+                mCatService = CatService.getInstance(mCi, mContext, this, mSlotId);
+            } else {
+                ((CatService)mCatService).update(mCi, mContext, this);
             }
         } else {
             if (mCatService != null) {
-                CatServiceFactory.disposeCatService(mPhoneId);
+                mCatService.dispose();
             }
             mCatService = null;
         }
@@ -299,6 +314,7 @@ public class UiccCard {
         boolean isHotSwapSupported = mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_hotswapCapable);
 
+        isHotSwapSupported = true;
         if (isHotSwapSupported) {
             log("onIccSwap: isHotSwapSupported is true, don't prompt for rebooting");
             return;
@@ -358,6 +374,10 @@ public class UiccCard {
                 return;
             }
 
+            if (DBG) {
+                log("Received message " + msg + "[" + msg.what
+                        + "]");
+            }
             switch (msg.what) {
                 case EVENT_CARD_REMOVED:
                     onIccSwap(false);
@@ -370,7 +390,8 @@ public class UiccCard {
                 case EVENT_TRANSMIT_APDU_LOGICAL_CHANNEL_DONE:
                 case EVENT_TRANSMIT_APDU_BASIC_CHANNEL_DONE:
                 case EVENT_SIM_IO_DONE:
-                case EVENT_SIM_GET_ATR_DONE:
+                case EVENT_GET_ATR_DONE:
+                case EVENT_OPEN_CHANNEL_WITH_SW_DONE:
                     AsyncResult ar = (AsyncResult)msg.obj;
                     if (ar.exception != null) {
                        if (DBG)
@@ -509,13 +530,6 @@ public class UiccCard {
     }
 
     /**
-     * Exposes {@link CommandsInterface.getAtr}
-     */
-    public void getAtr(Message response) {
-        mCi.getAtr(mHandler.obtainMessage(EVENT_SIM_GET_ATR_DONE, response));
-    }
-
-    /**
      * Exposes {@link CommandsInterface.sendEnvelopeWithStatus}
      */
     public void sendEnvelopeWithStatus(String contents, Message response) {
@@ -533,16 +547,12 @@ public class UiccCard {
         return count;
     }
 
-    public int getPhoneId() {
-        return mPhoneId;
-    }
-
     /**
      * Returns true iff carrier priveleges rules are null (dont need to be loaded) or loaded.
      */
     public boolean areCarrierPriviligeRulesLoaded() {
-        return mCarrierPrivilegeRules != null
-            && mCarrierPrivilegeRules.areCarrierPriviligeRulesLoaded();
+        return mCarrierPrivilegeRules == null
+            || mCarrierPrivilegeRules.areCarrierPriviligeRulesLoaded();
     }
 
     /**
@@ -623,25 +633,13 @@ public class UiccCard {
         }
         return null;
     }
-    public UICCConfig getUICCConfig() {
-        return mUICCConfig;
-    }
 
-    void onRefresh(IccRefreshResponse refreshResponse){
-        for ( int i = 0; i < mUiccApplications.length; i++) {
-            if (mUiccApplications[i] != null) {
-                // Let the app know that the refresh occurred
-                mUiccApplications[i].onRefresh(refreshResponse);
-            }
-        }
-    }
-
-    protected void log(String msg) {
-        Rlog.d(LOG_TAG, msg);
+    private void log(String msg) {
+        Rlog.d(LOG_TAG, msg  + " (slot " + mSlotId + ")");
     }
 
     private void loge(String msg) {
-        Rlog.e(LOG_TAG, msg);
+        Rlog.e(LOG_TAG, msg + " (slot " + mSlotId + ")");
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
@@ -692,18 +690,98 @@ public class UiccCard {
                 }
             }
         }
-        // Print UiccCarrierPrivilegeRules and registrants.
-        if (mCarrierPrivilegeRules == null) {
-            pw.println(" mCarrierPrivilegeRules: null");
-        } else {
-            pw.println(" mCarrierPrivilegeRules: " + mCarrierPrivilegeRules);
-            mCarrierPrivilegeRules.dump(fd, pw, args);
-        }
-        pw.println(" mCarrierPrivilegeRegistrants: size=" + mCarrierPrivilegeRegistrants.size());
-        for (int i = 0; i < mCarrierPrivilegeRegistrants.size(); i++) {
-            pw.println("  mCarrierPrivilegeRegistrants[" + i + "]="
-                    + ((Registrant)mCarrierPrivilegeRegistrants.get(i)).getHandler());
-        }
         pw.flush();
     }
+
+    // Added by M begin
+    public int getSlotId() {
+        return mSlotId;
+    }
+
+    public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics, int slotId, boolean isUpdateSiminfo) {
+        if (DBG) log("Creating simId " + slotId + ",isUpdateSiminfo" + isUpdateSiminfo);
+        mCardState = ics.mCardState;
+        mSlotId = slotId;
+        update(c, ci, ics, isUpdateSiminfo);
+    }
+
+    public void exchangeSimIo(int fileID, int command,
+                                           int p1, int p2, int p3, String pathID, String data, String pin2, Message onComplete) {
+        mCi.iccIO(command, fileID, pathID, p1, p2, p3, data, pin2,
+              mHandler.obtainMessage(EVENT_SIM_IO_DONE, onComplete));
+    }
+
+    public void iccGetAtr(Message onComplete) {
+        mCi.iccGetATR(mHandler.obtainMessage(EVENT_GET_ATR_DONE, onComplete));
+    }
+
+    public String getIccCardType() {
+        mIccType = SystemProperties.get(UICCCARD_PROPERTY_RIL_UICC_TYPE[mSlotId]);
+        if (DBG) log("getIccCardType(): iccType = " + mIccType);
+        return mIccType;
+    }
+
+    public void iccOpenChannelWithSw(String AID, Message onComplete) {
+        mCi.iccOpenChannelWithSw(AID,
+            mHandler.obtainMessage(EVENT_OPEN_CHANNEL_WITH_SW_DONE, onComplete));
+    }
+
+    public void update(Context c, CommandsInterface ci, IccCardStatus ics, boolean isUpdateSimInfo) {
+        synchronized (mLock) {
+            if (mDestroyed) {
+                loge("Updated after destroyed! Fix me!");
+                return;
+            }
+            CardState oldState = mCardState;
+            mCardState = ics.mCardState;
+            mUniversalPinState = ics.mUniversalPinState;
+            mGsmUmtsSubscriptionAppIndex = ics.mGsmUmtsSubscriptionAppIndex;
+            mCdmaSubscriptionAppIndex = ics.mCdmaSubscriptionAppIndex;
+            mImsSubscriptionAppIndex = ics.mImsSubscriptionAppIndex;
+            mContext = c;
+            mCi = ci;
+            //update applications
+            if (DBG) log(ics.mApplications.length + " applications");
+            for (int i = 0; i < mUiccApplications.length; i++) {
+                if (mUiccApplications[i] == null) {
+                    //Create newly added Applications
+                    if (i < ics.mApplications.length) {
+                        mUiccApplications[i] = new UiccCardApplication(this,
+                                ics.mApplications[i], mContext, mCi);
+                    }
+                } else if (i >= ics.mApplications.length) {
+                    //Delete removed applications
+                    mUiccApplications[i].dispose();
+                    mUiccApplications[i] = null;
+                } else {
+                    //Update the rest
+                    mUiccApplications[i].update(ics.mApplications[i], mContext, mCi);
+                }
+            }
+
+            createAndUpdateCatService();
+            sanitizeApplicationIndexes();
+
+            RadioState radioState = mCi.getRadioState();
+            if (DBG) log("update: radioState=" + radioState + " mLastRadioState="
+                    + mLastRadioState + "isUpdateSimInfo= " + isUpdateSimInfo);
+            // No notifications while radio is off or we just powering up
+            if (isUpdateSimInfo) {
+                if (radioState == RadioState.RADIO_ON && mLastRadioState == RadioState.RADIO_ON) {
+                    if (oldState != CardState.CARDSTATE_ABSENT &&
+                            mCardState == CardState.CARDSTATE_ABSENT) {
+                        if (DBG) log("update: notify card removed");
+                        mAbsentRegistrants.notifyRegistrants();
+                        mHandler.sendMessage(mHandler.obtainMessage(EVENT_CARD_REMOVED, null));
+                    } else if (oldState == CardState.CARDSTATE_ABSENT &&
+                            mCardState != CardState.CARDSTATE_ABSENT) {
+                        if (DBG) log("update: notify card added");
+                        mHandler.sendMessage(mHandler.obtainMessage(EVENT_CARD_ADDED, null));
+                    }
+                }
+            }
+            mLastRadioState = radioState;
+        }
+    }
+    // Added by M end
 }

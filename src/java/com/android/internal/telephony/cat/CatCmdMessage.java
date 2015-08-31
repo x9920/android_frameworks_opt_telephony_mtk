@@ -18,6 +18,13 @@ package com.android.internal.telephony.cat;
 
 import android.os.Parcel;
 import android.os.Parcelable;
+import java.util.List;
+
+import com.android.internal.telephony.cat.bip.OtherAddress;
+import com.android.internal.telephony.cat.bip.TransportProtocol;
+import com.android.internal.telephony.cat.bip.BipUtils;
+import com.android.internal.telephony.cat.bip.ChannelStatus;
+import com.android.internal.telephony.cat.bip.BearerDesc;
 
 /**
  * Class used to pass CAT messages from telephony to application. Application
@@ -36,11 +43,43 @@ public class CatCmdMessage implements Parcelable {
     private SetupEventListSettings mSetupEventListSettings = null;
     private boolean mLoadIconFailed = false;
 
+    // Add by Huibin Mao MTK80229
+    // ICS Migration start
+    // parameters for BIP
+    public BearerDesc mBearerDesc = null;
+    public int mBufferSize = 0;
+    public OtherAddress mLocalAddress = null;
+    public TransportProtocol mTransportProtocol = null;
+    public OtherAddress mDataDestinationAddress = null;
+
+    public String mApn = null;
+    public String mLogin = null;
+    public String mPwd = null;
+
+    public int mChannelDataLength = 0;
+    public int mRemainingDataLength = 0;
+    public byte[] mChannelData = null;
+
+    public ChannelStatus mChannelStatusData = null;
+
+    public int mCloseCid = 0;
+    public int mSendDataCid = 0;
+    public int mReceiveDataCid = 0;
+    public boolean mCloseBackToTcpListen = false;
+    public int mSendMode = 0;
+    public List<ChannelStatus> mChannelStatusList = null;
+
+    public int mInfoType = 0;
+    public String mDestAddress = null;
+
+    // ICS Migration end
+
     // Command Qualifier values for refresh command
     static final int REFRESH_NAA_INIT_AND_FULL_FILE_CHANGE  = 0x00;
     static final int REFRESH_NAA_INIT_AND_FILE_CHANGE       = 0x02;
     static final int REFRESH_NAA_INIT                       = 0x03;
     static final int REFRESH_UICC_RESET                     = 0x04;
+
     /*
      * Container for Launch Browser command settings.
      */
@@ -78,7 +117,6 @@ public class CatCmdMessage implements Parcelable {
 
     CatCmdMessage(CommandParams cmdParams) {
         mCmdDet = cmdParams.mCmdDet;
-        mLoadIconFailed =  cmdParams.mLoadIconFailed;
         switch(getCmdType()) {
         case SET_UP_MENU:
         case SELECT_ITEM:
@@ -109,7 +147,7 @@ public class CatCmdMessage implements Parcelable {
             mTextMsg = params.mTextMsg;
             break;
         case GET_CHANNEL_STATUS:
-            mTextMsg = ((CallSetupParams) cmdParams).mConfirmMsg;
+            mTextMsg = ((GetChannelStatusParams) cmdParams).textMsg;
             break;
         case SET_UP_CALL:
             mCallSettings = new CallSettings();
@@ -117,15 +155,49 @@ public class CatCmdMessage implements Parcelable {
             mCallSettings.callMsg = ((CallSetupParams) cmdParams).mCallMsg;
             break;
         case OPEN_CHANNEL:
+            mBearerDesc = ((OpenChannelParams) cmdParams).bearerDesc;
+            mBufferSize = ((OpenChannelParams) cmdParams).bufferSize;
+            mLocalAddress = ((OpenChannelParams) cmdParams).localAddress;
+            mTransportProtocol = ((OpenChannelParams) cmdParams).transportProtocol;
+            mDataDestinationAddress = ((OpenChannelParams) cmdParams).dataDestinationAddress;
+            mTextMsg = ((OpenChannelParams) cmdParams).textMsg;
+
+            if (mBearerDesc != null) {
+                if (mBearerDesc.bearerType == BipUtils.BEARER_TYPE_GPRS ||
+                    mBearerDesc.bearerType == BipUtils.BEARER_TYPE_DEFAULT ||
+                    mBearerDesc.bearerType == BipUtils.BEARER_TYPE_EUTRAN) {
+                    mApn = ((OpenChannelParams) cmdParams).gprsParams.accessPointName;
+                    mLogin = ((OpenChannelParams) cmdParams).gprsParams.userLogin;
+                    mPwd = ((OpenChannelParams) cmdParams).gprsParams.userPwd;
+                }
+            } else {
+                CatLog.d("[BIP]", "Invalid BearerDesc object");
+            }
+            break;
         case CLOSE_CHANNEL:
+            mTextMsg = ((CloseChannelParams) cmdParams).textMsg;
+            mCloseCid = ((CloseChannelParams) cmdParams).mCloseCid;
+            mCloseBackToTcpListen = ((CloseChannelParams) cmdParams).mBackToTcpListen;
+            break;
         case RECEIVE_DATA:
+            mTextMsg = ((ReceiveDataParams) cmdParams).textMsg;
+            mChannelDataLength = ((ReceiveDataParams) cmdParams).channelDataLength;
+            mReceiveDataCid = ((ReceiveDataParams) cmdParams).mReceiveDataCid;
+            break;
         case SEND_DATA:
-            BIPClientParams param = (BIPClientParams) cmdParams;
-            mTextMsg = param.mTextMsg;
+            mTextMsg = ((SendDataParams) cmdParams).textMsg;
+            mChannelData = ((SendDataParams) cmdParams).channelData;
+            mSendDataCid = ((SendDataParams) cmdParams).mSendDataCid;
+            mSendMode = ((SendDataParams) cmdParams).mSendMode;
             break;
         case SET_UP_EVENT_LIST:
             mSetupEventListSettings = new SetupEventListSettings();
             mSetupEventListSettings.eventList = ((SetEventListParams) cmdParams).mEventInfo;
+            break;
+        case CALLCTRL_RSP_MSG:
+            mTextMsg = ((CallCtrlBySimParams) cmdParams).mTextMsg;
+            mInfoType = ((CallCtrlBySimParams) cmdParams).mInfoType;
+            mDestAddress = ((CallCtrlBySimParams) cmdParams).mDestAddress;
             break;
         case ACTIVATE:
         case PROVIDE_LOCAL_INFORMATION:
@@ -154,6 +226,12 @@ public class CatCmdMessage implements Parcelable {
             mCallSettings.confirmMsg = in.readParcelable(null);
             mCallSettings.callMsg = in.readParcelable(null);
             break;
+        // Add by Huibin Mao MTK80229
+        // ICS Migration start
+        case OPEN_CHANNEL:
+            mBearerDesc = in.readParcelable(null);
+            break;
+        // ICS Migration end
         case SET_UP_EVENT_LIST:
             mSetupEventListSettings = new SetupEventListSettings();
             int length = in.readInt();
@@ -186,6 +264,12 @@ public class CatCmdMessage implements Parcelable {
             dest.writeParcelable(mCallSettings.confirmMsg, 0);
             dest.writeParcelable(mCallSettings.callMsg, 0);
             break;
+        // Add by Huibin Mao MTK80229
+        // ICS Migration start
+        case OPEN_CHANNEL:
+            dest.writeParcelable(mBearerDesc, 0);
+            break;
+        // ICS Migration end
         case SET_UP_EVENT_LIST:
             dest.writeIntArray(mSetupEventListSettings.eventList);
             break;
@@ -211,7 +295,19 @@ public class CatCmdMessage implements Parcelable {
         return 0;
     }
 
+    // Add by Huibin Mao MTK80229
+    // ICS Migration start
     /* external API to be used by application */
+    /**
+     * Return command qualifier
+     * @internal
+     */
+    public int getCmdQualifier() {
+        return mCmdDet.commandQualifier;
+    }
+
+    // ICS Migration end
+
     public AppInterface.CommandType getCmdType() {
         return AppInterface.CommandType.fromInt(mCmdDet.typeOfCommand);
     }
@@ -238,6 +334,13 @@ public class CatCmdMessage implements Parcelable {
 
     public CallSettings getCallSettings() {
         return mCallSettings;
+    }
+    /**
+     * Return bearer description
+     * @internal
+     */
+    public BearerDesc getBearerDesc() {
+        return mBearerDesc;
     }
 
     /**

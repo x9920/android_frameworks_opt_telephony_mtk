@@ -114,4 +114,9 @@ public class SendConf extends GenericPdu {
      *    public byte[] getStoreStatusText() {return null;}
      *    public void setStoreStatusText(byte[] value) {}
      */
+
+    /// M: new method for CT.
+    public EncodedStringValue getResponseText() {
+        return mPduHeaders.getEncodedStringValue(PduHeaders.RESPONSE_TEXT);
+    }
 }

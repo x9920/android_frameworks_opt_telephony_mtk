@@ -32,6 +32,23 @@ class GsmCall extends Call {
 
     /*package*/ GsmCallTracker mOwner;
 
+
+    /***************************** Class Methods *****************************/
+
+    static State
+    stateFromDCState (DriverCall.State dcState) {
+        switch (dcState) {
+            case ACTIVE:        return State.ACTIVE;
+            case HOLDING:       return State.HOLDING;
+            case DIALING:       return State.DIALING;
+            case ALERTING:      return State.ALERTING;
+            case INCOMING:      return State.INCOMING;
+            case WAITING:       return State.WAITING;
+            default:            throw new RuntimeException ("illegal call state:" + dcState);
+        }
+    }
+
+
     /****************************** Constructors *****************************/
     /*package*/
     GsmCall (GsmCallTracker owner) {
@@ -59,7 +76,35 @@ class GsmCall extends Call {
     @Override
     public boolean
     isMultiparty() {
-        return mConnections.size() > 1;
+
+        /* M: call control part start */
+        int DiscConn = 0;
+        boolean isMptyCall = false;
+
+        for (int j = mConnections.size() - 1 ; j >= 0 ; j--) {
+            GsmConnection cn = (GsmConnection) (mConnections.get(j));
+
+            if (cn.getState() == GsmCall.State.DISCONNECTED) {
+                DiscConn++;
+            }
+        }
+
+        if (mConnections.size() <= 1) {
+            isMptyCall = false;
+        } else if (mConnections.size() > 1) {
+            if ((mConnections.size() - DiscConn) <= 1) {
+                isMptyCall = false;
+            } else if (getState() == GsmCall.State.DIALING) {
+                isMptyCall = false;
+            } else {
+                isMptyCall = true;
+            }
+        } else {
+            isMptyCall = false;
+        }
+
+        return isMptyCall;
+        /* M: call control part end */
     }
 
     /** Please note: if this is the foreground call and a
@@ -71,6 +116,18 @@ class GsmCall extends Call {
     hangup() throws CallStateException {
         mOwner.hangup(this);
     }
+
+    /* M: call control part start */
+    /** Please note: if this is the foreground call and a
+     *  background call exists, the background call will be resumed
+     *  because an AT+CHLD=1 will be sent
+     *  Add this API by mtk01411 [ALPS00475147]
+     */
+    public void
+    hangup(int discRingingCallCause) throws CallStateException {
+        mOwner.hangup(this, discRingingCallCause);
+    }
+    /* M: call control part end */
 
     @Override
     public String
@@ -172,7 +229,10 @@ class GsmCall extends Call {
 
             cn.onHangupLocal();
         }
-        mState = State.DISCONNECTING;
+
+        if ((mConnections.size() != 0) && getState().isAlive()) {
+           mState = State.DISCONNECTING;
+        }
     }
 
     /**

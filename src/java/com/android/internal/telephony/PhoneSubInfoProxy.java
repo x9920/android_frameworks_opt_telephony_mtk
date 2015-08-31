@@ -21,6 +21,7 @@ import java.io.PrintWriter;
 
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.Message;
 
 
 public class PhoneSubInfoProxy extends IPhoneSubInfo.Stub {
@@ -41,10 +42,6 @@ public class PhoneSubInfoProxy extends IPhoneSubInfo.Stub {
 
     public String getImei() {
         return mPhoneSubInfo.getImei();
-    }
-
-    public String getNai() {
-        return mPhoneSubInfo.getNai();
     }
 
     @Override
@@ -152,8 +149,8 @@ public class PhoneSubInfoProxy extends IPhoneSubInfo.Stub {
     }
 
     @Override
-    public String getDeviceIdForPhone(int phoneId) throws RemoteException {
-        // FIXME: getDeviceIdForPhone
+    public String getDeviceIdForSubscriber(int subId) throws RemoteException {
+        // FIXME: getDeviceIdForSubscriber
         return null;
     }
 
@@ -164,14 +161,8 @@ public class PhoneSubInfoProxy extends IPhoneSubInfo.Stub {
     }
 
     @Override
-    public String getDeviceSvnUsingSubId(int subId) throws RemoteException {
-        // FIXME: getDeviceSvnUsingSubId
-        return null;
-    }
-
-    @Override
-    public String getNaiForSubscriber(int subId) throws RemoteException {
-        // FIXME: NaiForSubscriber
+    public String getDeviceSvnForSubscriber(int subId) throws RemoteException {
+        // FIXME: getDeviceSvnForSubscriber
         return null;
     }
 
@@ -271,6 +262,96 @@ public class PhoneSubInfoProxy extends IPhoneSubInfo.Stub {
      */
     public String getIccSimChallengeResponse(int subId, int appType, String data) {
         return mPhoneSubInfo.getIccSimChallengeResponse(subId, appType, data);
+    }
+
+    /**
+     * Returns the GBA bootstrapping parameters (GBABP) that was loaded from the ISIM.
+     * @return GBA bootstrapping parameters or null if not present or not loaded
+     */
+    @Override
+    public String getIsimGbabp() {
+        return mPhoneSubInfo.getIsimGbabp();
+    }
+
+    /**
+     * Set the GBA bootstrapping parameters (GBABP) value into the ISIM.
+     * @param gbabp a GBA bootstrapping parameters value in String type
+     * @param onComplete
+     *        onComplete.obj will be an AsyncResult
+     *        ((AsyncResult)onComplete.obj).exception == null on success
+     *        ((AsyncResult)onComplete.obj).exception != null on fail
+     */
+    @Override
+    public void setIsimGbabp(String gbabp, Message onComplete) {
+        mPhoneSubInfo.setIsimGbabp(gbabp, onComplete);
+    }
+
+    /**
+     * Returns the USIM Service Table (UST) that was loaded from the USIM.
+     * @param service service index on UST
+     * @return the indicated service is supported or not
+     */
+    @Override
+    public boolean getUsimService(int service) {
+        return mPhoneSubInfo.getUsimService(service);
+    }
+
+    /**
+     * Returns the GBA bootstrapping parameters (GBABP) that was loaded from the USIM.
+     * @return GBA bootstrapping parameters or null if not present or not loaded
+     */
+    @Override
+    public String getUsimGbabp() {
+        return mPhoneSubInfo.getUsimGbabp();
+    }
+
+    /**
+     * Set the GBA bootstrapping parameters (GBABP) value into the USIM.
+     * @param gbabp a GBA bootstrapping parameters value in String type
+     * @param onComplete
+     *        onComplete.obj will be an AsyncResult
+     *        ((AsyncResult)onComplete.obj).exception == null on success
+     *        ((AsyncResult)onComplete.obj).exception != null on fail
+     */
+    @Override
+    public void setUsimGbabp(String gbabp, Message onComplete) {
+        mPhoneSubInfo.setUsimGbabp(gbabp, onComplete);
+    }
+
+    /**
+     * Returns the Public Service Identity of the SM-SC (PSISMSC) that was loaded from the USIM.
+     * @return PSISMSC or null if not present or not loaded
+     */
+    @Override
+    public byte[] getIsimPsismsc() {
+        return mPhoneSubInfo.getIsimPsismsc();
+    }
+
+    /**
+     * Returns the Public Service Identity of the SM-SC (PSISMSC) that was loaded from the USIM.
+     * @return PSISMSC or null if not present or not loaded
+     */
+    @Override
+    public byte[] getUsimPsismsc() {
+        return mPhoneSubInfo.getUsimPsismsc();
+    }
+
+    /**
+     * Returns the Short message parameter (SMSP) that was loaded from the USIM.
+     * @return PSISMSC or null if not present or not loaded
+     */
+    @Override
+    public byte[] getUsimSmsp() {
+        return mPhoneSubInfo.getUsimSmsp();
+    }
+
+    /**
+     * Returns the MCC+MNC length that was loaded from the USIM.
+     * @return MCC+MNC length or 0 if not present or not loaded
+     */
+    @Override
+    public int getMncLength() {
+        return mPhoneSubInfo.getMncLength();
     }
 
     @Override

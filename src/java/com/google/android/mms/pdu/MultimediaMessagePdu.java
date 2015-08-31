@@ -147,4 +147,15 @@ public class MultimediaMessagePdu extends GenericPdu{
     public void setDate(long value) {
         mPduHeaders.setLongInteger(value, PduHeaders.DATE);
     }
+
+    /// M: add for saving sent time of received messages. @{
+    /**
+     * Get DATE_SENT value.
+     *
+     * @return the value
+     */
+    public long getDateSent() {
+        return mPduHeaders.getLongInteger(PduHeaders.DATE_SENT);
+    }
+    /// @}
 }

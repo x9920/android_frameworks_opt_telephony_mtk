@@ -60,14 +60,16 @@ public class ResultException extends CatException {
     }
 
     public ResultException(ResultCode result, int additionalInfo) {
-        this(result);
+
+        super();
+        mResult = result;
+        mAdditionalInfo = additionalInfo;
+        mExplanation = "";
 
         if (additionalInfo < 0) {
             throw new AssertionError(
                     "Additional info must be greater than zero!");
         }
-
-        mAdditionalInfo = additionalInfo;
     }
 
     public ResultException(ResultCode result, int additionalInfo, String explanation) {

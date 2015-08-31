@@ -22,6 +22,10 @@ import java.util.Arrays;
 
 import android.provider.Telephony;
 
+// MTK-START
+import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
+// MTK-END
+
 /**
  * Base class declaring the specific methods and members for SmsMessage.
  * {@hide}
@@ -32,9 +36,6 @@ public abstract class SmsMessageBase {
 
     /** {@hide} The address of the sender */
     protected SmsAddress mOriginatingAddress;
-
-    /** {@hide} The address of the receiver */
-    protected SmsAddress mRecipientAddress;
 
     /** {@hide} The message body as a string. May be null if the message isn't text */
     protected String mMessageBody;
@@ -87,11 +88,33 @@ public abstract class SmsMessageBase {
     /** TP-Message-Reference - Message Reference of sent message. @hide */
     public int mMessageRef;
 
-    // TODO(): This class is duplicated in SmsMessage.java. Refactor accordingly.
-    public static abstract class SubmitPduBase  {
+    // MTK-START
+    /** {@hide} The address of the receiver */
+    protected SmsAddress destinationAddress;
+
+    /** {@hide} */
+    protected int relativeValidityPeriod;
+    /** {@hide} */
+    protected int absoluteValidityPeriod;
+
+    /** {@hide} */
+    protected int mwiType = -1;
+    /** {@hide} */
+    protected int mwiCount = 0;
+    // MTK-END
+
+    // MTK-START
+    // base class of submit/deliver pdu
+    public static abstract class PduBase {
         public byte[] encodedScAddress; // Null if not applicable.
         public byte[] encodedMessage;
 
+        abstract public String toString();
+    }
+    // MTK-END
+
+    // TODO(): This class is duplicated in SmsMessage.java. Refactor accordingly.
+    public static abstract class SubmitPduBase extends PduBase  {
         @Override
         public String toString() {
             return "SubmitPdu: encodedScAddress = "
@@ -100,6 +123,18 @@ public abstract class SmsMessageBase {
                     + Arrays.toString(encodedMessage);
         }
     }
+
+    // MTK-START
+    public static abstract class DeliverPduBase extends PduBase {
+        @Override
+        public String toString() {
+            return "DeliverPdu: encodedScAddress = "
+                    + Arrays.toString(encodedScAddress)
+                    + ", encodedMessage = "
+                    + Arrays.toString(encodedMessage);
+        }
+    }
+    // MTK-END
 
     /**
      * Returns the address of the SMS service center that relayed this message
@@ -146,6 +181,22 @@ public abstract class SmsMessageBase {
      * Returns the class of this message.
      */
     public abstract SmsConstants.MessageClass getMessageClass();
+
+    // Add by VIA start, HANDROID#1950
+    /**
+     * Returns the Validity Period Relative.
+     *
+     * The Validity Period - Relative subparameter indicates to the message center the time
+     * period, beginning from the time the message is received by the message center, after which
+     * the message should be discarded if not delivered to the destination. May also be used to
+     * indicate the time period to retain a message sent to a mobile station.
+     *
+     * @return validty period-relative if it is set, otherwise -1
+     */
+    public int getValidityPeriodRelative() {
+        return -1;
+    }
+    // Add by VIA end, HANDROID#1950
 
     /**
      * Returns the message body, or email message body if this message was from
@@ -317,9 +368,12 @@ public abstract class SmsMessageBase {
     protected void parseMessageBody() {
         // originatingAddress could be null if this message is from a status
         // report.
-        if (mOriginatingAddress != null && mOriginatingAddress.couldBeEmailGateway()) {
+        // MTK-START
+        if (mOriginatingAddress != null && mOriginatingAddress.couldBeEmailGateway() &&
+                !isReplace()) {
             extractEmailAddressFromMessageBody();
         }
+        // MTK-END
     }
 
     /**
@@ -349,16 +403,30 @@ public abstract class SmsMessageBase {
          mIsEmail = Telephony.Mms.isEmailAddress(mEmailFrom);
     }
 
+    // MTK-START
     /**
-     * {@hide}
-     * Returns the receiver address of this SMS message in String
+     * Returns the destination address (receiver) of this SMS message in String
      * form or null if unavailable
      */
-    public String getRecipientAddress() {
-        if (mRecipientAddress == null) {
+    public String getDestinationAddress() {
+        if (destinationAddress == null) {
             return null;
         }
 
-        return mRecipientAddress.getAddressString();
+        return destinationAddress.getAddressString();
     }
+
+    /**
+     * Calculate the number of septets needed to encode the message.
+     *
+     * @param msgBody the message to encode
+     * @param use7bitOnly ignore (but still count) illegal characters if true
+     * @param encodingType text encoding type(7-bit, 16-bit or automatic)
+     * @return TextEncodingDetails
+     */
+    public static TextEncodingDetails calculateLength(CharSequence msgBody,
+            boolean use7bitOnly, int encodingType) {
+        return null;
+    }
+    // MTK-END
 }

@@ -20,17 +20,20 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.net.NetworkConfig;
 import android.telephony.Rlog;
-import android.text.TextUtils;
 
 import com.android.internal.R;
 import com.android.internal.telephony.DctConstants;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+//VoLTE
+import com.mediatek.internal.telephony.DefaultBearerConfig;
 
 /**
  * Maintain the Apn context
@@ -77,6 +80,16 @@ public class ApnContext {
 
     private final DcTrackerBase mDcTracker;
 
+    /**
+      * for VoLte Default Bearer used
+      */
+    DefaultBearerConfig mDefaultBearerConfig;
+
+    /**
+      * To decrease the time of unused apn type.
+      */
+    private boolean mNeedNotify;
+
     public ApnContext(Context context, String apnType, String logTag, NetworkConfig config,
             DcTrackerBase tracker) {
         mContext = context;
@@ -89,6 +102,10 @@ public class ApnContext {
         priority = config.priority;
         LOG_TAG = logTag;
         mDcTracker = tracker;
+        
+        // VoLTE
+        mDefaultBearerConfig = new DefaultBearerConfig();
+        mNeedNotify = needNotifyType(apnType);
     }
 
     public String getApnType() {
@@ -218,6 +235,7 @@ public class ApnContext {
             log("set enabled as " + enabled + ", current state is " + mDataEnabled.get());
         }
         mDataEnabled.set(enabled);
+        mNeedNotify = true;
     }
 
     public boolean isEnabled() {
@@ -238,8 +256,7 @@ public class ApnContext {
     public boolean isProvisioningApn() {
         String provisioningApn = mContext.getResources()
                 .getString(R.string.mobile_provisioning_apn);
-        if (!TextUtils.isEmpty(provisioningApn) &&
-                (mApnSetting != null) && (mApnSetting.apn != null)) {
+        if ((mApnSetting != null) && (mApnSetting.apn != null)) {
             return (mApnSetting.apn.equals(provisioningApn));
         } else {
             return false;
@@ -256,13 +273,50 @@ public class ApnContext {
 
     public void decRefCount() {
         synchronized (mRefCountLock) {
-            if ((mRefCount > 0) && (mRefCount-- == 1)) {
+            if (mRefCount-- == 1) {
                 mDcTracker.setEnabled(mDcTracker.apnTypeToId(mApnType), false);
-            } else {
-                log("Ignoring defCount request as mRefCount is: " + mRefCount);
             }
         }
     }
+
+    //VoLTE [start]
+    public DefaultBearerConfig getDefaultBearerConfig() {
+        return mDefaultBearerConfig;
+    }
+
+    public void setDefaultBearerConfig(DefaultBearerConfig defaultBearerConfig) {
+        mDefaultBearerConfig.copyFrom(defaultBearerConfig);
+    }
+
+    public boolean isDefaultBearerConfigValid() {
+        return (0 == mDefaultBearerConfig.mIsValid) ? false : true;
+    }
+
+    public void resetDefaultBearerConfig() {
+        mDefaultBearerConfig.reset();
+    }
+    //VoLTE [end]
+
+    //MTK Start: Check need notify or not
+    private boolean needNotifyType(String apnTypes) {
+        if (apnTypes.equals(PhoneConstants.APN_TYPE_DM)
+                || apnTypes.equals(PhoneConstants.APN_TYPE_WAP)
+                || apnTypes.equals(PhoneConstants.APN_TYPE_NET)
+                || apnTypes.equals(PhoneConstants.APN_TYPE_CMMAIL)
+                || apnTypes.equals(PhoneConstants.APN_TYPE_TETHERING)
+                || apnTypes.equals(PhoneConstants.APN_TYPE_RCSE)) {
+            return false;
+        }
+        return true;
+    }
+
+    public boolean isNeedNotify() {
+        if (DBG) {
+            log("Current apn tpye:" + mApnType + " isNeedNotify" + mNeedNotify);
+        }
+        return mNeedNotify;
+    }
+    //MTK End: Check need notify or not
 
     @Override
     public synchronized String toString() {

@@ -73,12 +73,12 @@ public class TelephonyCapabilities {
     }
 
     /**
-     * Return true if the current phone supports voice message count.
-     * and the count is available
-     * Both CDMA and GSM phones support voice message count
+     * Return true if the current phone can retrieve the voice message count.
+     *
+     * Currently this is assumed to be true on CDMA phones and false otherwise.
      */
     public static boolean supportsVoiceMessageCount(Phone phone) {
-        return (phone.getVoiceMessageCount() != -1);
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
     }
 
     /**
@@ -179,8 +179,7 @@ public class TelephonyCapabilities {
      * something more appropriate.
      */
     public static boolean supportsAdn(int phoneType) {
-        return ((phoneType == PhoneConstants.PHONE_TYPE_GSM)
-                || (phoneType == PhoneConstants.PHONE_TYPE_CDMA));
+        return phoneType == PhoneConstants.PHONE_TYPE_GSM;
     }
 
     /**

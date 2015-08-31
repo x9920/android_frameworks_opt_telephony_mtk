@@ -34,7 +34,6 @@ import android.provider.Telephony;
 import android.text.TextUtils;
 import android.telephony.SubscriptionManager;
 import android.telephony.Rlog;
-import android.telephony.ServiceState;
 
 import com.android.internal.telephony.CommandsInterface;
 
@@ -50,6 +49,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.PhoneSubInfo;
 import com.android.internal.telephony.SMSDispatcher;
 import com.android.internal.telephony.SmsBroadcastUndelivered;
+import com.android.internal.telephony.Subscription;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.gsm.GsmSMSDispatcher;
 import com.android.internal.telephony.gsm.SmsMessage;
@@ -70,6 +70,8 @@ import java.io.PrintWriter;
 import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ALPHA;
 import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ISO_COUNTRY;
 import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_NUMERIC;
+import static com.android.internal.telephony.PhoneConstants.EVENT_SUBSCRIPTION_ACTIVATED;
+import static com.android.internal.telephony.PhoneConstants.EVENT_SUBSCRIPTION_DEACTIVATED;
 
 public class CDMALTEPhone extends CDMAPhone {
     static final String LOG_LTE_TAG = "CDMALTEPhone";
@@ -97,6 +99,29 @@ public class CDMALTEPhone extends CDMAPhone {
 
     }
 
+    // Constructors
+    public CDMALTEPhone(Context context, CommandsInterface ci, PhoneNotifier notifier) {
+        super(context, ci, notifier, false);
+    }
+
+    @Override
+    public void handleMessage (Message msg) {
+        switch (msg.what) {
+            case EVENT_SUBSCRIPTION_ACTIVATED:
+                log("EVENT_SUBSCRIPTION_ACTIVATED");
+                onSubscriptionActivated();
+                break;
+
+            case EVENT_SUBSCRIPTION_DEACTIVATED:
+                log("EVENT_SUBSCRIPTION_DEACTIVATED");
+                onSubscriptionDeactivated();
+                break;
+
+            default:
+                super.handleMessage(msg);
+        }
+    }
+
     @Override
     protected void initSstIcc() {
         mSST = new CdmaLteServiceStateTracker(this);
@@ -105,9 +130,6 @@ public class CDMALTEPhone extends CDMAPhone {
     @Override
     public void dispose() {
         synchronized(PhoneProxy.lockForRadioTechnologyChange) {
-            if (mSimRecords != null) {
-                mSimRecords.unregisterForRecordsLoaded(this);
-            }
             super.dispose();
         }
     }
@@ -118,36 +140,6 @@ public class CDMALTEPhone extends CDMAPhone {
     }
 
     @Override
-    public void handleMessage(Message msg) {
-        AsyncResult ar;
-        Message onComplete;
-
-        // messages to be handled whether or not the phone is being destroyed
-        // should only include messages which are being re-directed and do not use
-        // resources of the phone being destroyed
-        switch (msg.what) {
-            // handle the select network completion callbacks.
-            case EVENT_SET_NETWORK_MANUAL_COMPLETE:
-            case EVENT_SET_NETWORK_AUTOMATIC_COMPLETE:
-                super.handleMessage(msg);
-                return;
-        }
-
-        if (!mIsTheCurrentActivePhone) {
-            Rlog.e(LOG_TAG, "Received message " + msg +
-                    "[" + msg.what + "] while being destroyed. Ignoring.");
-            return;
-        }
-        switch(msg.what) {
-            case EVENT_SIM_RECORDS_LOADED:
-                mSimRecordsLoadedRegistrants.notifyRegistrants();
-                break;
-
-            default:
-                super.handleMessage(msg);
-        }
-    }
-    @Override
     public PhoneConstants.DataState getDataConnectionState(String apnType) {
         PhoneConstants.DataState ret = PhoneConstants.DataState.DISCONNECTED;
 
@@ -156,10 +148,6 @@ public class CDMALTEPhone extends CDMAPhone {
             // removeReferences() have already been called
 
             ret = PhoneConstants.DataState.DISCONNECTED;
-        } else if (mSST.getCurrentDataConnectionState() != ServiceState.STATE_IN_SERVICE &&
-                            mOosIsDisconnect) {
-            ret = PhoneConstants.DataState.DISCONNECTED;
-            log("getDataConnectionState: Data is Out of Service. ret = " + ret);
         } else if (mDcTracker.isApnTypeEnabled(apnType) == false) {
             ret = PhoneConstants.DataState.DISCONNECTED;
         } else {
@@ -233,31 +221,10 @@ public class CDMALTEPhone extends CDMAPhone {
         return false;
     }
 
-    // return IMSI from CSIM as subscriber ID if available, otherwise reads from USIM
+    // return IMSI from USIM as subscriber ID.
     @Override
     public String getSubscriberId() {
-        IccRecords r = (mIccRecords != null) ? mIccRecords.get() : null;
-        if (r != null) {
-            String imsi = r.getIMSI();
-            if (!TextUtils.isEmpty(imsi)) {
-                log("IMSI = " + imsi);
-                return imsi;
-            }
-        }
-
-        log("IMSI undefined");
-        return "";
-    }
-
-
-    // fix CTS test expecting IMEI to be used as device ID when in LteOnCdma mode
-    @Override
-    public String getDeviceId() {
-        if (TelephonyManager.getLteOnCdmaModeStatic() == PhoneConstants.LTE_ON_CDMA_TRUE) {
-            return mImei;
-        } else {
-            return super.getDeviceId();
-        }
+        return (mSimRecords != null) ? mSimRecords.getIMSI() : "";
     }
 
     // return GID1 from USIM
@@ -293,10 +260,6 @@ public class CDMALTEPhone extends CDMAPhone {
 
     @Override
     protected void onUpdateIccAvailability() {
-        if (mSimRecords != null) {
-            mSimRecords.unregisterForRecordsLoaded(this);
-        }
-
         if (mUiccController == null ) {
             return;
         }
@@ -319,9 +282,6 @@ public class CDMALTEPhone extends CDMAPhone {
             newSimRecords = (SIMRecords) newUiccApplication.getIccRecords();
         }
         mSimRecords = newSimRecords;
-        if (mSimRecords != null) {
-            mSimRecords.registerForRecordsLoaded(this, EVENT_SIM_RECORDS_LOADED, null);
-        }
 
         super.onUpdateIccAvailability();
     }
@@ -364,6 +324,29 @@ public class CDMALTEPhone extends CDMAPhone {
         setProperties();
     }
 
+    private void onSubscriptionActivated() {
+//        mSubscriptionData = SubscriptionManager.getCurrentSubscription(mSubscription);
+
+        log("SUBSCRIPTION ACTIVATED : slotId : " + mSubscriptionData.slotId
+                + " appid : " + mSubscriptionData.m3gpp2Index
+                + " subId : " + mSubscriptionData.subId
+                + " subStatus : " + mSubscriptionData.subStatus);
+
+        // Make sure properties are set for proper subscription.
+        setProperties();
+
+        onUpdateIccAvailability();
+        mSST.sendMessage(mSST.obtainMessage(ServiceStateTracker.EVENT_ICC_CHANGED));
+        ((CdmaLteServiceStateTracker)mSST).updateCdmaSubscription();
+        ((DcTracker)mDcTracker).updateRecords();
+    }
+
+    private void onSubscriptionDeactivated() {
+        log("SUBSCRIPTION DEACTIVATED");
+        // resetSubSpecifics
+        mSubscriptionData = null;
+    }
+
     // Set the properties per subscription
     private void setProperties() {
         //Change the system property
@@ -397,14 +380,14 @@ public class CDMALTEPhone extends CDMAPhone {
         if(getUnitTestMode()) {
             return;
         }
-        TelephonyManager.setTelephonyProperty(mPhoneId, property, value);
+        TelephonyManager.setTelephonyProperty(property, getSubId(), value);
     }
 
     public String getSystemProperty(String property, String defValue) {
         if(getUnitTestMode()) {
             return null;
         }
-        return TelephonyManager.getTelephonyProperty(mPhoneId, property, defValue);
+        return TelephonyManager.getTelephonyProperty(property, getSubId(), defValue);
     }
 
     public void updateDataConnectionTracker() {
@@ -437,7 +420,7 @@ public class CDMALTEPhone extends CDMAPhone {
                 curIccRecords = mIccRecords.get();
                 if (curIccRecords != null && (curIccRecords instanceof RuimRecords)) {
                     RuimRecords csim = (RuimRecords) curIccRecords;
-                    operatorNumeric = csim.getOperatorNumeric();
+                    operatorNumeric = csim.getRUIMOperatorNumeric();
                 }
             }
         }
@@ -461,17 +444,6 @@ public class CDMALTEPhone extends CDMAPhone {
         ((DcTracker)mDcTracker)
                 .unregisterForAllDataDisconnected(h);
     }
-
-    @Override
-    public void registerForSimRecordsLoaded(Handler h, int what, Object obj) {
-        mSimRecordsLoadedRegistrants.addUnique(h, what, obj);
-    }
-
-    @Override
-    public void unregisterForSimRecordsLoaded(Handler h) {
-        mSimRecordsLoadedRegistrants.remove(h);
-    }
-
 
     @Override
     protected void log(String s) {

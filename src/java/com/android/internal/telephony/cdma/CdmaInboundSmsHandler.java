@@ -18,9 +18,12 @@ package com.android.internal.telephony.cdma;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.os.Message;
 import android.os.SystemProperties;
+import android.preference.PreferenceManager;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.SmsCbMessage;
 
@@ -29,12 +32,14 @@ import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.InboundSmsHandler;
 import com.android.internal.telephony.InboundSmsTracker;
 import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsStorageMonitor;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.WspTypeDecoder;
 import com.android.internal.telephony.cdma.sms.SmsEnvelope;
+import com.android.internal.util.BitwiseInputStream;
 
 import java.util.Arrays;
 
@@ -163,12 +168,18 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
                 return Intents.RESULT_SMS_HANDLED;
 
             case SmsEnvelope.TELESERVICE_WAP:
+            case SmsEnvelope.TELESERVICE_WAP_CT:
                 // handled below, after storage check
                 break;
 
-            case SmsEnvelope.TELESERVICE_CT_WAP:
-                // handled below, after TELESERVICE_WAP
-                break;
+            case SmsEnvelope.TELESERVICE_REG_SMS_CT:
+                log("send cdma reg message, mPhone.getSubId() = " + mPhone.getSubId());
+                Intent intent = new Intent(Intents.CDMA_REG_SMS_ACTION);
+                intent.putExtra("pdu", sms.getPdu());
+                intent.putExtra("format", "3gpp2");
+                intent.putExtra(PhoneConstants.SUBSCRIPTION_KEY, mPhone.getSubId());
+                mContext.sendBroadcast(intent);
+                return Intents.RESULT_SMS_HANDLED;
 
             default:
                 loge("unsupported teleservice 0x" + Integer.toHexString(teleService));
@@ -183,16 +194,27 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
             return Intents.RESULT_SMS_OUT_OF_MEMORY;
         }
 
-        if (SmsEnvelope.TELESERVICE_WAP == teleService) {
-            return processCdmaWapPdu(sms.getUserData(), sms.mMessageRef,
-                    sms.getOriginatingAddress(), sms.getTimestampMillis());
-        } else if (SmsEnvelope.TELESERVICE_CT_WAP == teleService) {
-            /* China Telecom WDP header contains Message identifier
-               and User data subparametrs extract these fields */
-            if (!sms.processCdmaCTWdpHeader(sms)) {
+        // / M: Add WAP_CT checking. @{
+        if (SmsEnvelope.TELESERVICE_WAP == teleService
+                || SmsEnvelope.TELESERVICE_WAP_CT == teleService) {
+            byte[] userData = null;
+            try {
+                BitwiseInputStream inStream = new BitwiseInputStream(sms.getUserData());
+                inStream.skip(8 * 8 + 5);
+
+                int len = inStream.available() / 8;
+                userData = new byte[len];
+                for (int i = 0; i < len; i++) {
+                    userData[i] = (byte) inStream.read(8);
+                }
+            } catch (BitwiseInputStream.AccessException ex) {
+                loge("process wap pdu fail");
+            }
+            if (userData == null || (userData != null && userData.length == 0)) {
+                log("Received a empty WAPPUSH . Discard.");
                 return Intents.RESULT_SMS_HANDLED;
             }
-            return processCdmaWapPdu(sms.getUserData(), sms.mMessageRef,
+            return processCdmaWapPdu(userData, sms.mMessageRef,
                     sms.getOriginatingAddress(), sms.getTimestampMillis());
         }
 
@@ -262,19 +284,12 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
         int voicemailCount = sms.getNumOfVoicemails();
         if (DBG) log("Voicemail count=" + voicemailCount);
 
+        // Store the voicemail count in preferences.
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        SharedPreferences.Editor editor = sp.edit();
+        editor.putInt(CDMAPhone.VM_COUNT_CDMA + mPhone.getPhoneId(), voicemailCount);
+        editor.apply();
         mPhone.setVoiceMessageWaiting(1, voicemailCount);
-        // range check
-        if (voicemailCount < 0) {
-            voicemailCount = -1;
-        } else if (voicemailCount > 99) {
-            // C.S0015-B v2, 4.5.12
-            // range: 0-99
-            voicemailCount = 99;
-        }
-        // update voice mail count in phone
-        mPhone.setVoiceMessageCount(voicemailCount);
-        // store voice mail count in preferences
-        storeVoiceMailCount();
     }
 
     /**

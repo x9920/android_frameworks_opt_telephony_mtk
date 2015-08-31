@@ -34,7 +34,6 @@ public class RetrieveConf extends MultimediaMessagePdu {
     public RetrieveConf() throws InvalidHeaderValueException {
         super();
         setMessageType(PduHeaders.MESSAGE_TYPE_RETRIEVE_CONF);
-        setTransactionId(generateTransactionId());
     }
 
     /**
@@ -44,7 +43,6 @@ public class RetrieveConf extends MultimediaMessagePdu {
      */
     RetrieveConf(PduHeaders headers) {
         super(headers);
-        setTransactionId(generateTransactionId());
     }
 
     /**
@@ -55,12 +53,6 @@ public class RetrieveConf extends MultimediaMessagePdu {
      */
     RetrieveConf(PduHeaders headers, PduBody body) {
         super(headers, body);
-        setTransactionId(generateTransactionId());
-    }
-
-    private byte[] generateTransactionId() {
-        String transactionId = "T" + Long.toHexString(System.currentTimeMillis());
-        return transactionId.getBytes();
     }
 
     /**

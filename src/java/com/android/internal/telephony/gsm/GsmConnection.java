@@ -28,11 +28,17 @@ import android.telephony.Rlog;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
 import android.text.TextUtils;
+import android.os.SystemProperties;
 
 import com.android.internal.telephony.*;
 import com.android.internal.telephony.uicc.UiccCardApplication;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
+
+/* M: call control part start */
+// import com.mediatek.common.MPlugin;
+// import com.mediatek.common.telephony.IGsmConnectionExt;
+/* M: call control part end */
 
 /**
  * {@hide}
@@ -78,6 +84,9 @@ public class GsmConnection extends Connection {
     static final int EVENT_WAKE_LOCK_TIMEOUT = 4;
 
     //***** Constants
+    /* M: call control part start */
+    static final int PAUSE_DELAY_FIRST_MILLIS = 500;
+    /* M: call control part end */
     static final int PAUSE_DELAY_MILLIS = 3 * 1000;
     static final int WAKE_LOCK_TIMEOUT_MILLIS = 60*1000;
 
@@ -123,6 +132,7 @@ public class GsmConnection extends Connection {
         mNumberPresentation = dc.numberPresentation;
         mUusInfo = dc.uusInfo;
 
+        
         mIndex = index;
 
         mParent = parentFromDCState (dc.state);
@@ -227,6 +237,25 @@ public class GsmConnection extends Connection {
         }
     }
 
+    /* M: call control part start */
+    /* [ALPS00475147] Add by mtk01411 */
+    public void hangup(int discRingingConnCause) throws CallStateException {
+        if (!mDisconnected) {
+            mOwner.hangup(this);
+            /* Only for RingingCall's connection to provide this interface */
+            if (mParent == mOwner.mRingingCall && mOwner.mRingingCall.hasConnection(this)) {
+                mCause = discRingingConnCause;
+                Rlog.d(LOG_TAG, "[GSMConn] hangup RingingConn with cause=" + discRingingConnCause + ", and ringCall state=" + mParent.mState);
+                if (mParent.mState == Call.State.INCOMING || mParent.mState == Call.State.WAITING) {
+                    mParent.mState = Call.State.DISCONNECTING;
+                }
+            }
+        } else {
+            throw new CallStateException("disconnected");
+        }
+    }
+    /* M: call control part end */
+
     @Override
     public void separate() throws CallStateException {
         if (!mDisconnected) {
@@ -309,14 +338,19 @@ public class GsmConnection extends Connection {
         switch (causeCode) {
             case CallFailCause.USER_BUSY:
                 return DisconnectCause.BUSY;
-
+            /* M: call control part start */
             case CallFailCause.NO_CIRCUIT_AVAIL:
+                return DisconnectCause.NO_CIRCUIT_AVAIL;
             case CallFailCause.TEMPORARY_FAILURE:
+                return DisconnectCause.CONGESTION;
             case CallFailCause.SWITCHING_CONGESTION:
+                return DisconnectCause.SWITCHING_CONGESTION;
             case CallFailCause.CHANNEL_NOT_AVAIL:
             case CallFailCause.QOS_NOT_AVAIL:
-            case CallFailCause.BEARER_NOT_AVAIL:
                 return DisconnectCause.CONGESTION;
+            case CallFailCause.BEARER_NOT_AVAIL:
+                return DisconnectCause.BEARER_NOT_AVAIL;
+            /* M: call control part end */
 
             case CallFailCause.ACM_LIMIT_EXCEEDED:
                 return DisconnectCause.LIMIT_EXCEEDED;
@@ -330,20 +364,125 @@ public class GsmConnection extends Connection {
             case CallFailCause.UNOBTAINABLE_NUMBER:
                 return DisconnectCause.UNOBTAINABLE_NUMBER;
 
-            case CallFailCause.DIAL_MODIFIED_TO_USSD:
-                return DisconnectCause.DIAL_MODIFIED_TO_USSD;
+            /* M: call control part start */
+            case CallFailCause.NO_ROUTE_TO_DESTINATION:
+                return DisconnectCause.NO_ROUTE_TO_DESTINATION;
 
-            case CallFailCause.DIAL_MODIFIED_TO_SS:
-                return DisconnectCause.DIAL_MODIFIED_TO_SS;
+            case CallFailCause.NO_USER_RESPONDING:
+                return DisconnectCause.NO_USER_RESPONDING;
 
-            case CallFailCause.DIAL_MODIFIED_TO_DIAL:
-                return DisconnectCause.DIAL_MODIFIED_TO_DIAL;
+            case CallFailCause.USER_ALERTING_NO_ANSWER:
+                return DisconnectCause.USER_ALERTING_NO_ANSWER;
 
-            case CallFailCause.EMERGENCY_TEMP_FAILURE:
-                return DisconnectCause.EMERGENCY_TEMP_FAILURE;
+            /**
+             * Google default behavior:
+             * Return DisconnectCause.ERROR_UNSPECIFIED to play TONE_CALL_ENDED for
+             * CALL_REJECTED(+CEER: 21) and NORMAL_UNSPECIFIED(+CEER: 31)
+             */
+            //case CallFailCause.CALL_REJECTED:
+            //    return DisconnectCause.CALL_REJECTED;
 
-            case CallFailCause.EMERGENCY_PERM_FAILURE:
-                return DisconnectCause.EMERGENCY_PERM_FAILURE;
+            //case CallFailCause.NORMAL_UNSPECIFIED:
+            //    return DisconnectCause.NORMAL_UNSPECIFIED;
+
+            case CallFailCause.INVALID_NUMBER_FORMAT:
+                return DisconnectCause.INVALID_NUMBER_FORMAT;
+
+            case CallFailCause.FACILITY_REJECTED:
+                return DisconnectCause.FACILITY_REJECTED;
+
+            case CallFailCause.RESOURCE_UNAVAILABLE:
+                return DisconnectCause.RESOURCE_UNAVAILABLE;
+
+            case CallFailCause.BEARER_NOT_AUTHORIZED:
+                return DisconnectCause.BEARER_NOT_AUTHORIZED;
+
+            case CallFailCause.SERVICE_NOT_AVAILABLE:
+
+            case CallFailCause.NETWORK_OUT_OF_ORDER:
+                return DisconnectCause.SERVICE_NOT_AVAILABLE;
+
+            case CallFailCause.BEARER_NOT_IMPLEMENT:
+                return DisconnectCause.BEARER_NOT_IMPLEMENT;
+
+            case CallFailCause.FACILITY_NOT_IMPLEMENT:
+                return DisconnectCause.FACILITY_NOT_IMPLEMENT;
+
+            case CallFailCause.RESTRICTED_BEARER_AVAILABLE:
+                return DisconnectCause.RESTRICTED_BEARER_AVAILABLE;
+
+            case CallFailCause.OPTION_NOT_AVAILABLE:
+                return DisconnectCause.OPTION_NOT_AVAILABLE;
+
+            case CallFailCause.INCOMPATIBLE_DESTINATION:
+                return DisconnectCause.INCOMPATIBLE_DESTINATION;
+
+            case CallFailCause.CM_MM_RR_CONNECTION_RELEASE:
+                return DisconnectCause.CM_MM_RR_CONNECTION_RELEASE;
+
+            case CallFailCause.CHANNEL_UNACCEPTABLE:
+                return DisconnectCause.CHANNEL_UNACCEPTABLE;
+
+            case CallFailCause.OPERATOR_DETERMINED_BARRING:
+                return DisconnectCause.OPERATOR_DETERMINED_BARRING;
+
+            case CallFailCause.PRE_EMPTION:
+                return DisconnectCause.PRE_EMPTION;
+
+            case CallFailCause.NON_SELECTED_USER_CLEARING:
+                return DisconnectCause.NON_SELECTED_USER_CLEARING;
+
+            case CallFailCause.DESTINATION_OUT_OF_ORDER:
+                return DisconnectCause.DESTINATION_OUT_OF_ORDER;
+
+            case CallFailCause.ACCESS_INFORMATION_DISCARDED:
+                return DisconnectCause.ACCESS_INFORMATION_DISCARDED;
+
+            case CallFailCause.REQUESTED_FACILITY_NOT_SUBSCRIBED:
+                return DisconnectCause.REQUESTED_FACILITY_NOT_SUBSCRIBED;
+
+            case CallFailCause.INCOMING_CALL_BARRED_WITHIN_CUG:
+                return DisconnectCause.INCOMING_CALL_BARRED_WITHIN_CUG;
+
+            case CallFailCause.INVALID_TRANSACTION_ID_VALUE:
+                return DisconnectCause.INVALID_TRANSACTION_ID_VALUE;
+
+            case CallFailCause.USER_NOT_MEMBER_OF_CUG:
+                return DisconnectCause.USER_NOT_MEMBER_OF_CUG;
+
+            case CallFailCause.INVALID_TRANSIT_NETWORK_SELECTION:
+                return DisconnectCause.INVALID_TRANSIT_NETWORK_SELECTION;
+
+            case CallFailCause.SEMANTICALLY_INCORRECT_MESSAGE:
+                return DisconnectCause.SEMANTICALLY_INCORRECT_MESSAGE;
+
+            case CallFailCause.INVALID_MANDATORY_INFORMATION:
+                return DisconnectCause.INVALID_MANDATORY_INFORMATION;
+
+            case CallFailCause.MESSAGE_TYPE_NON_EXISTENT:
+                return DisconnectCause.MESSAGE_TYPE_NON_EXISTENT;
+
+            case CallFailCause.MESSAGE_TYPE_NOT_COMPATIBLE_WITH_PROT_STATE:
+                return DisconnectCause.MESSAGE_TYPE_NOT_COMPATIBLE_WITH_PROT_STATE;
+
+            case CallFailCause.IE_NON_EXISTENT_OR_NOT_IMPLEMENTED:
+                return DisconnectCause.IE_NON_EXISTENT_OR_NOT_IMPLEMENTED;
+
+            case CallFailCause.CONDITIONAL_IE_ERROR:
+                return DisconnectCause.CONDITIONAL_IE_ERROR;
+
+            case CallFailCause.MESSAGE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE:
+                return DisconnectCause.MESSAGE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE;
+
+            case CallFailCause.RECOVERY_ON_TIMER_EXPIRY:
+                return DisconnectCause.RECOVERY_ON_TIMER_EXPIRY;
+
+            case CallFailCause.PROTOCOL_ERROR_UNSPECIFIED:
+                return DisconnectCause.PROTOCOL_ERROR_UNSPECIFIED;
+
+            case CallFailCause.INTERWORKING_UNSPECIFIED:
+                return DisconnectCause.INTERWORKING_UNSPECIFIED;
+            /* M: call control part end */
 
             case CallFailCause.ERROR_UNSPECIFIED:
             case CallFailCause.NORMAL_CLEARING:
@@ -353,11 +492,26 @@ public class GsmConnection extends Connection {
                 UiccCardApplication cardApp = phone.getUiccCardApplication();
                 AppState uiccAppState = (cardApp != null) ? cardApp.getState() :
                                                             AppState.APPSTATE_UNKNOWN;
+
+                Rlog.d(LOG_TAG, "serviceState = " + serviceState);
+
                 if (serviceState == ServiceState.STATE_POWER_OFF) {
                     return DisconnectCause.POWER_OFF;
                 } else if (serviceState == ServiceState.STATE_OUT_OF_SERVICE
                         || serviceState == ServiceState.STATE_EMERGENCY_ONLY ) {
-                    return DisconnectCause.OUT_OF_SERVICE;
+                    /* M: call control part start */
+                    /*
+                       Return OUT_OF_SERVICE when ECC is normal clearing will
+                       cause ECC retry in EmergencyCallHelper, so return NORMAL.
+                       mtk04070, 2012.02.17
+                    */
+                    if (causeCode == CallFailCause.NORMAL_CLEARING) {
+                        return DisconnectCause.NORMAL;
+                    }
+                    else {
+                        return DisconnectCause.OUT_OF_SERVICE;
+                    }
+                    /* M: call control part end */
                 } else if (uiccAppState != AppState.APPSTATE_READY) {
                     return DisconnectCause.ICC_ERROR;
                 } else if (causeCode == CallFailCause.ERROR_UNSPECIFIED) {
@@ -434,9 +588,9 @@ public class GsmConnection extends Connection {
             log(" mNumberConverted " + mNumberConverted);
             if (!equalsHandlesNulls(mAddress, dc.number) && (!mNumberConverted
                     || !equalsHandlesNulls(mConvertedNumber, dc.number))) {
-                if (Phone.DEBUG_PHONE) log("update: phone # changed!");
-                mAddress = dc.number;
-                changed = true;
+                   if (Phone.DEBUG_PHONE) log("update: phone # changed!");
+                   mAddress = dc.number;
+                   changed = true;
             }
         }
 
@@ -471,7 +625,8 @@ public class GsmConnection extends Connection {
         /** Some state-transition events */
 
         if (Phone.DEBUG_PHONE) log(
-                "update: parent=" + mParent +
+                "update: id=" + (mIndex + 1) +
+                ", parent=" + mParent +
                 ", hasNewParent=" + (newParent != mParent) +
                 ", wasConnectingInOrOut=" + wasConnectingInOrOut +
                 ", wasHolding=" + wasHolding +
@@ -508,6 +663,23 @@ public class GsmConnection extends Connection {
 
         onStartedHolding();
     }
+
+    /* M: call control part start */
+    /**
+     * Called when this Connection is fail to enter backgroundCall
+     * because we switch fail
+     * (We thinkwe're going to end upHOLDING in the backgroundCall when dial is initiated)
+     */
+    void
+    resumeHoldAfterDialFailed() {
+        if (mParent != null) {
+            mParent.detach(this);
+        }
+
+        mParent = mOwner.mForegroundCall;
+        mParent.attachFake(this, GsmCall.State.ACTIVE);
+    }
+    /* M: call control part end */
 
     /*package*/ int
     getGSMIndex() throws CallStateException {
@@ -564,10 +736,33 @@ public class GsmConnection extends Connection {
             // distinguish between the addressing digits (i.e. the phone number)
             // and the DTMF digits. Upon subsequent occurrences of the
             // separator,
-            // the UE shall pause again for 3 seconds ( 20 ) before sending
-            // any further DTMF digits.
-            mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_PAUSE_DONE),
-                    PAUSE_DELAY_MILLIS);
+            /* M: call control part start */
+            if (mNextPostDialChar == 1) {
+                // The first occurrence.
+                // We don't need to pause here, but wait for just a bit anyway
+                /// M: [ALPS00330882]Easy porting for OP07 - ADAPT test case. @{
+				/*
+                try {
+                    IGsmConnectionExt mGsmConnectionExt = MPlugin.createInstance(IGsmConnectionExt.class.getName(), mOwner.mPhone.getContext());
+                    if (mGsmConnectionExt != null) {
+                        mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_PAUSE_DONE),
+                            mGsmConnectionExt.getFirstPauseDelayMSeconds(PAUSE_DELAY_FIRST_MILLIS));
+                    } else {
+                        Rlog.e(LOG_TAG, "Fail to initialize IGsmConnectionExt");
+                    }
+                } catch (Exception e) {
+                    Rlog.e(LOG_TAG, "Fail to create plug-in");
+                    e.printStackTrace();
+				}
+				*/
+                /// @}
+            } else {
+                // the UE shall pause again for 3 seconds ( 20 ) before sending
+                // any further DTMF digits.
+                mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_PAUSE_DONE),
+                        PAUSE_DELAY_MILLIS);
+            }
+            /* M: call control part end */
         } else if (c == PhoneNumberUtils.WAIT) {
             setPostDialState(PostDialState.WAIT);
         } else if (c == PhoneNumberUtils.WILD) {
@@ -620,7 +815,10 @@ public class GsmConnection extends Connection {
         }
 
         if (mPostDialString == null ||
-                mPostDialString.length() <= mNextPostDialChar) {
+                mPostDialString.length() <= mNextPostDialChar ||
+               /* M: call control part start */
+                mDisconnected == true) {
+               /* M: call control part end */
             setPostDialState(PostDialState.COMPLETE);
 
             // notifyMessage.arg1 is 0 on complete
@@ -643,9 +841,6 @@ public class GsmConnection extends Connection {
             }
         }
 
-        notifyPostDialListenersNextChar(c);
-
-        // TODO: remove the following code since the handler no longer executes anything.
         postDialHandler = mOwner.mPhone.mPostDialHandler;
 
         Message notifyMessage;
@@ -785,4 +980,36 @@ public class GsmConnection extends Connection {
 
         return false;
     }
+
+    /* M: call control part start */
+    /*package*/ void
+    onReplaceDisconnect(int cause) {
+        this.mCause = cause;
+
+        if (!mDisconnected) {
+            mIndex = -1;
+
+            mDisconnectTime = System.currentTimeMillis();
+            mDuration = SystemClock.elapsedRealtime() - mConnectTimeReal;
+            mDisconnected = true;
+
+            log("onReplaceDisconnect: cause=" + cause);
+
+            if (mParent != null) {
+                mParent.connectionDisconnected(this);
+            }
+        }
+        releaseWakeLock();
+    }
+
+    public String toString() {
+        StringBuilder str = new StringBuilder(128);
+
+        str.append("*  -> id: " + (mIndex + 1))
+                .append(", num: " + getAddress())
+                .append(", MT: " + mIsIncoming)
+                .append(", mDisconnected: " + mDisconnected);
+        return str.toString();
+    }
+    /* M: call control part end */
 }

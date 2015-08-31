@@ -72,4 +72,9 @@ public class TextMessage implements Parcelable {
             return new TextMessage[size];
         }
     };
+
+    public static TextMessage getInstance() {
+        TextMessage self = new TextMessage();
+        return self;
+    }
 }

@@ -25,7 +25,6 @@ import com.android.internal.telephony.CommandException;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.util.ArrayList;
 
 
 /**
@@ -33,7 +32,7 @@ import java.util.ArrayList;
  */
 public abstract class CallTracker extends Handler {
 
-    private static final boolean DBG_POLL = false;
+    private static final boolean DBG_POLL = true;
 
     //***** Constants
 
@@ -42,7 +41,7 @@ public abstract class CallTracker extends Handler {
     protected int mPendingOperations;
     protected boolean mNeedsPoll;
     protected Message mLastRelevantPoll;
-    protected ArrayList<Connection> mHandoverConnections = new ArrayList<Connection>();
+    protected Connection mHandoverConnection;
 
     public CommandsInterface mCi;
 
@@ -68,6 +67,28 @@ public abstract class CallTracker extends Handler {
     protected static final int EVENT_THREE_WAY_DIAL_L2_RESULT_CDMA = 16;
     protected static final int EVENT_THREE_WAY_DIAL_BLANK_FLASH    = 20;
 
+    /* M: call control part start */
+    protected static final int EVENT_HANG_UP_RESULT                = 21;
+    protected static final int EVENT_DIAL_CALL_RESULT              = 22;
+    protected static final int EVENT_RADIO_OFF_OR_NOT_AVAILABLE    = 23;
+    protected static final int EVENT_INCOMING_CALL_INDICATION      = 24;
+    protected static final int EVENT_CNAP_INDICATION               = 25;
+    protected static final int EVENT_SPEECH_CODEC_INFO             = 26;
+    protected static final int EVENT_CDMA_CALL_ACCEPTED            = 27;
+    protected static final int EVENT_CDMA_DIAL_THREEWAY_DELAY      = 28;
+    protected static final int EVENT_EXIT_ECM_RESPONSE_DIAL_THREEWAY = 29;
+    /* M: call control part end */
+
+    ///M: IMS conference call feature. @{
+    protected static final int EVENT_ECONF_SRVCC_INDICATION = 30;
+    protected static final int EVENT_ECONF_RESULT_INDICATION = 31;
+    protected static final int EVENT_RETRIEVE_HELD_CALL_RESULT = 32;
+    protected static final int EVENT_CALL_INFO_INDICATION = 33;
+    /// @}
+
+//MTK_TC1_FEATURE for LGE CSMCC_MO_CALL_MODIFIED { 
+    protected static final int EVENT_MO_CALL_STATE_CHANGE        = 34;
+//}
     protected void pollCallsWhenSafe() {
         mNeedsPoll = true;
 
@@ -94,34 +115,12 @@ public abstract class CallTracker extends Handler {
 
     protected abstract void handlePollCalls(AsyncResult ar);
 
-    protected Connection getHoConnection(DriverCall dc) {
-        for (Connection hoConn : mHandoverConnections) {
-            log("getHoConnection - compare number: hoConn= " + hoConn.toString());
-            if (hoConn.getAddress() != null && hoConn.getAddress().contains(dc.number)) {
-                log("getHoConnection: Handover connection match found = " + hoConn.toString());
-                return hoConn;
-            }
-        }
-        for (Connection hoConn : mHandoverConnections) {
-            log("getHoConnection: compare state hoConn= " + hoConn.toString());
-            if (hoConn.getStateBeforeHandover() == Call.stateFromDCState(dc.state)) {
-                log("getHoConnection: Handover connection match found = " + hoConn.toString());
-                return hoConn;
-            }
-        }
-        return null;
-    }
-
-    protected void notifySrvccState(Call.SrvccState state, ArrayList<Connection> c) {
-        if (state == Call.SrvccState.STARTED && c != null) {
-            // SRVCC started. Prepare handover connections list
-            mHandoverConnections.addAll(c);
+    protected void notifySrvccState(Call.SrvccState state, Connection c) {
+        if (state == Call.SrvccState.STARTED) {
+            mHandoverConnection = c;
         } else if (state != Call.SrvccState.COMPLETED) {
-            // SRVCC FAILED/CANCELED. Clear the handover connections list
-            // Individual connections will be removed from the list in handlePollCalls()
-            mHandoverConnections.clear();
+            mHandoverConnection = null;
         }
-        log("notifySrvccState: mHandoverConnections= " + mHandoverConnections.toString());
     }
 
     protected void handleRadioAvailable() {
@@ -214,7 +213,6 @@ public abstract class CallTracker extends Handler {
         String[] entry;
         String[] tmpArray;
         String outNumber = "";
-        boolean needConvert = false;
         for(String convertMap : convertMaps) {
             log("convertNumberIfNecessary: " + convertMap);
             entry = convertMap.split(":");
@@ -223,35 +221,25 @@ public abstract class CallTracker extends Handler {
                 if (!TextUtils.isEmpty(entry[0]) && dialNumber.equals(entry[0])) {
                     if (tmpArray.length >= 2 && !TextUtils.isEmpty(tmpArray[1])) {
                         if (compareGid1(phoneBase, tmpArray[1])) {
-                            needConvert = true;
+                            mNumberConverted = true;
                         }
                     } else if (outNumber.isEmpty()) {
-                        needConvert = true;
+                        mNumberConverted = true;
                     }
-
-                    if (needConvert) {
+                    if (mNumberConverted) {
                         if(!TextUtils.isEmpty(tmpArray[0]) && tmpArray[0].endsWith("MDN")) {
-                            String mdn = phoneBase.getLine1Number();
-                            if (!TextUtils.isEmpty(mdn) ) {
-                                if (mdn.startsWith("+")) {
-                                    outNumber = mdn;
-                                } else {
-                                    outNumber = tmpArray[0].substring(0, tmpArray[0].length() -3)
-                                            + mdn;
-                                }
-                            }
+                            String prefix = tmpArray[0].substring(0, tmpArray[0].length() -3);
+                            outNumber = prefix + phoneBase.getLine1Number();
                         } else {
                             outNumber = tmpArray[0];
                         }
-                        needConvert = false;
                     }
                 }
             }
         }
 
-        if (!TextUtils.isEmpty(outNumber)) {
+        if (mNumberConverted) {
             log("convertNumberIfNecessary: convert service number");
-            mNumberConverted = true;
             return outNumber;
         }
 
@@ -285,7 +273,7 @@ public abstract class CallTracker extends Handler {
     public abstract void unregisterForVoiceCallStarted(Handler h);
     public abstract void registerForVoiceCallEnded(Handler h, int what, Object obj);
     public abstract void unregisterForVoiceCallEnded(Handler h);
-    public abstract PhoneConstants.State getState();
+
     protected abstract void log(String msg);
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

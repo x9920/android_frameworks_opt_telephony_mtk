@@ -34,10 +34,22 @@ public final class UsimFileHandler extends IccFileHandler implements IccConstant
 
     @Override
     protected String getEFPath(int efid) {
+        return getEFPath(efid, false);
+    }
+    protected String getEFPath(int efid, boolean is7FFF) {
+        // TODO(): DF_GSM can be 7F20 or 7F21 to handle backward compatibility.
+        // Implement this after discussion with OEMs.
+        String DF_APP = DF_GSM;
+
+        if ((mParentApp != null) && (mParentApp.getType() == IccCardApplicationStatus.AppType.APPTYPE_USIM)) {
+            DF_APP = DF_USIM;
+        }
         switch(efid) {
+        case EF_ICCID:
+            return null;
         case EF_SMS:
+        case EF_SMSP:   // [ALPS01206315] Support EF_SMSP
         case EF_EXT6:
-        case EF_EXT5:
         case EF_MWIS:
         case EF_MBI:
         case EF_SPN:
@@ -58,10 +70,15 @@ public final class UsimFileHandler extends IccFileHandler implements IccConstant
         case EF_EXT2:
         case EF_INFO_CPHS:
         case EF_CSP_CPHS:
+        case EF_SDN:
         case EF_GID1:
         case EF_LI:
-        case EF_PLMNWACT:
+        case EF_ECC:
+
             return MF_SIM + DF_ADF;
+
+        case EF_PSISMSC:
+            return /*MF_SIM +*/ DF_TELECOM;
 
         case EF_PBR:
             // we only support global phonebook.

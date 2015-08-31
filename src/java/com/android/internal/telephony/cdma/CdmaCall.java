@@ -23,6 +23,8 @@ import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.DriverCall;
 import com.android.internal.telephony.Phone;
+import android.telephony.DisconnectCause;
+import android.telephony.Rlog;
 
 /**
  * {@hide}
@@ -31,6 +33,22 @@ public final class CdmaCall extends Call {
     /*************************** Instance Variables **************************/
 
     /*package*/ CdmaCallTracker mOwner;
+
+    /***************************** Class Methods *****************************/
+
+    static State
+    stateFromDCState (DriverCall.State dcState) {
+        switch (dcState) {
+            case ACTIVE:        return State.ACTIVE;
+            case HOLDING:       return State.HOLDING;
+            case DIALING:       return State.DIALING;
+            case ALERTING:      return State.ALERTING;
+            case INCOMING:      return State.INCOMING;
+            case WAITING:       return State.WAITING;
+            default:            throw new RuntimeException ("illegal call state:" + dcState);
+        }
+    }
+
 
     /****************************** Constructors *****************************/
     /*package*/
@@ -69,6 +87,17 @@ public final class CdmaCall extends Call {
     hangup() throws CallStateException {
         mOwner.hangup(this);
     }
+
+    /// M: @{
+    /** Please note: if this is the foreground call and a
+     *  background call exists, the background call will be resumed
+     *  because an AT+CHLD=1 will be sent
+     */
+    public void
+    hangup(int discRingingCallCause) throws CallStateException {
+        mOwner.hangup(this, discRingingCallCause);
+    }
+    /// @}
 
     @Override
     public String
@@ -136,12 +165,17 @@ public final class CdmaCall extends Call {
         boolean changed = false;
 
         newState = stateFromDCState(dc.state);
-
+        /// M: Update state except old state is disconnecting and new state is incoming. @{
+        Rlog.d("CdmaCall", "update newState = " + newState + ", oldState = " + mState);
         if (newState != mState) {
-            mState = newState;
-            changed = true;
+            if(!(mState == State.DISCONNECTING && newState == State.INCOMING) &&
+                !(mState == State.DISCONNECTING && newState == State.DIALING)) {
+                mState = newState;
+                changed = true;
+            }
         }
-
+        Rlog.d("CdmaCall", "update changed = " + changed);
+        /// @}
         return changed;
     }
 

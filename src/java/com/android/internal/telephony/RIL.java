@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- * Not a Contribution.
- *
  * Copyright (C) 2006 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +29,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.Resources;
 import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.LocalSocket;
@@ -50,29 +46,26 @@ import android.provider.Settings.SettingNotFoundException;
 import android.telephony.CellInfo;
 import android.telephony.NeighboringCellInfo;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.PhoneRatFamily;
 import android.telephony.Rlog;
 import android.telephony.SignalStrength;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
-import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.Display;
 
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
-import com.android.internal.telephony.gsm.SsData;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.IccIoResult;
 import com.android.internal.telephony.uicc.IccRefreshResponse;
 import com.android.internal.telephony.uicc.IccUtils;
-import com.android.internal.telephony.uicc.SpnOverride;
 import com.android.internal.telephony.cdma.CdmaCallWaitingNotification;
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
-import com.android.internal.telephony.dataconnection.ApnProfileOmh;
-import com.android.internal.telephony.dataconnection.ApnSetting;
 import com.android.internal.telephony.dataconnection.DcFailCause;
 import com.android.internal.telephony.dataconnection.DataCallResponse;
 import com.android.internal.telephony.dataconnection.DataProfile;
@@ -85,13 +78,55 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Random;
+
+/* M: call control part start */
+import java.util.Vector;
+
+import com.android.internal.telephony.gsm.SuppCrssNotification;
+
+import android.os.IBinder;
+import android.os.Binder;
+import android.content.pm.PackageManager;
+import android.os.ServiceManager;
+// import com.mediatek.common.mom.IMobileManagerService;
+// import com.mediatek.common.mom.MobileManagerUtils;
+// import com.mediatek.common.mom.SubPermissions;
+/* M: call control part end */
+
+// import com.mediatek.common.telephony.gsm.PBEntry;
+// import com.mediatek.common.telephony.gsm.PBMemStorage;
+
+// MTK-START, SMS part
+import android.telephony.SmsParameters;
+import com.mediatek.internal.telephony.IccSmsStorageStatus;
+import com.mediatek.internal.telephony.CellBroadcastConfigInfo;
+// MTK-END, SMS part
+
+import com.android.internal.telephony.uicc.SpnOverride;
+import com.mediatek.internal.telephony.FemtoCellInfo;
+import com.mediatek.internal.telephony.NetworkInfoWithAcT;
+import java.io.UnsupportedEncodingException;
+import com.android.internal.telephony.uicc.UiccController;
+import com.android.internal.telephony.uicc.SIMRecords;
+import android.telephony.ServiceState;
+import android.telephony.SubscriptionManager;
+
+//VoLTE
+import com.mediatek.internal.telephony.QosStatus;
+import com.mediatek.internal.telephony.TftStatus;
+import com.mediatek.internal.telephony.DedicateDataCallState;
+import com.mediatek.internal.telephony.PacketFilterInfo;
+import com.mediatek.internal.telephony.TftAuthToken;
+import com.mediatek.internal.telephony.PcscfInfo;
+import com.mediatek.internal.telephony.DefaultBearerConfig;
+
+// import com.mediatek.common.MPlugin;
+// import com.mediatek.common.telephony.IServiceStateExt;
 
 /**
  * {@hide}
@@ -230,7 +265,7 @@ class RILRequest {
  *
  * {@hide}
  */
-public class RIL extends BaseCommands implements CommandsInterface {
+public final class RIL extends BaseCommands implements CommandsInterface {
     static final String RILJ_LOG_TAG = "RILJ";
     static final boolean RILJ_LOGD = true;
     static final boolean RILJ_LOGV = false; // STOPSHIP if true
@@ -240,25 +275,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
      * the vendor ril.
      */
     private static final int DEFAULT_WAKE_LOCK_TIMEOUT = 60000;
-    private static final int BYTE_SIZE = 1;
-
-    /** Starting number for OEMHOOK request and response IDs */
-    private static final int OEMHOOK_BASE = 0x80000;
-    final int OEMHOOK_UNSOL_SIM_REFRESH = OEMHOOK_BASE + 1016;
-    final int OEMHOOK_UNSOL_WWAN_IWLAN_COEXIST = OEMHOOK_BASE + 1018;
-
-    /** Set Local Call Hold subscription */
-    private static final int OEMHOOK_EVT_HOOK_SET_LOCAL_CALL_HOLD = OEMHOOK_BASE + 13;
-    /** Get Modem Capabilities*/
-    private static final int OEMHOOK_EVT_HOOK_GET_MODEM_CAPABILITY = OEMHOOK_BASE + 35;
-    /** Update Stack Binding*/
-    private static final int OEMHOOK_EVT_HOOK_UPDATE_SUB_BINDING = OEMHOOK_BASE + 36;
-
-
-    private static final int INT_SIZE = 4;
-    private static final String OEM_IDENTIFIER = "QOEMHOOK";
-    int mHeaderSize = OEM_IDENTIFIER.length() + 2 * INT_SIZE;
-    final int QCRIL_EVT_HOOK_UNSOL_MODEM_CAPABILITY = OEMHOOK_BASE + 1020;
 
     //***** Instance Variables
 
@@ -282,12 +298,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     // When we are testing emergency calls
     AtomicBoolean mTestingEmergencyCall = new AtomicBoolean(false);
 
-    protected Integer mInstanceId;
-
-    // Number of per-network elements expected in QUERY_AVAILABLE_NETWORKS's response.
-    // 4 elements is default, but many RILs actually return 5, making it impossible to
-    // divide the response array without prior knowledge of the number of elements.
-    protected int mQANElements = 4;
+    private Integer mInstanceId;
 
     //***** Events
 
@@ -297,7 +308,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     //***** Constants
 
     // match with constant in ril.cpp
-    static final int RIL_MAX_COMMAND_BYTES = (8 * 1024);
+    static final int RIL_MAX_COMMAND_BYTES = (20 * 1024);
     static final int RESPONSE_SOLICITED = 0;
     static final int RESPONSE_UNSOLICITED = 1;
 
@@ -313,18 +324,128 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     private final DisplayManager.DisplayListener mDisplayListener =
             new DisplayManager.DisplayListener() {
-        @Override
-        public void onDisplayAdded(int displayId) { }
+                  @Override
+                  public void onDisplayAdded(int displayId) { }
 
-        @Override
-        public void onDisplayRemoved(int displayId) { }
+                  @Override
+                  public void onDisplayRemoved(int displayId) { }
 
-        @Override
-        public void onDisplayChanged(int displayId) {
-            if (displayId == Display.DEFAULT_DISPLAY) {
-                updateScreenState();
-            }
+                  @Override
+                  public void onDisplayChanged(int displayId) {
+                      if (displayId == Display.DEFAULT_DISPLAY) {
+                          updateScreenState();
+                      }
+                  }
+    };
+
+    /* ALPS00799783: for restore previous preferred network type when set type fail */
+    private int mPreviousPreferredType = -1;
+
+    // private IServiceStateExt mServiceStateExt;
+
+    //MTK-START [mtk04070][111121][ALPS00093395]MTK added
+    //save the status of screen
+    private boolean isScreenOn = true;
+
+    /// M: C2K RILD socket name definition
+    static final String C2K_SOCKET_NAME_RIL = "rild-via";
+
+    /* M: call control part start */
+    /* DTMF request will be ignored when duplicated sending */
+    private class dtmfQueueHandler {
+
+        public dtmfQueueHandler() {
+            mDtmfStatus = DTMF_STATUS_STOP;
         }
+
+        public void start() {
+            mDtmfStatus = DTMF_STATUS_START;
+        }
+
+        public void stop() {
+            mDtmfStatus = DTMF_STATUS_STOP;
+        }
+
+        public boolean isStart() {
+            return (mDtmfStatus == DTMF_STATUS_START);
+        }
+
+        public void add(RILRequest o) {
+            mDtmfQueue.addElement(o);
+        }
+
+        public void remove(RILRequest o) {
+            mDtmfQueue.remove(o);
+        }
+
+        public void remove(int idx) {
+            mDtmfQueue.removeElementAt(idx);
+        }
+
+        public RILRequest get() {
+            return (RILRequest) mDtmfQueue.get(0);
+        }
+
+        public int size() {
+            return mDtmfQueue.size();
+        }
+
+        public void setPendingRequest(RILRequest r) {
+            mPendingCHLDRequest = r;
+        }
+
+        public RILRequest getPendingRequest() {
+            return mPendingCHLDRequest;
+        }
+
+        public void setSendChldRequest() {
+            mIsSendChldRequest = true;
+        }
+
+        public void resetSendChldRequest() {
+            mIsSendChldRequest = false;
+        }
+
+        public boolean hasSendChldRequest() {
+            riljLog("mIsSendChldRequest = " + mIsSendChldRequest);
+            return mIsSendChldRequest;
+        }
+
+        public final int MAXIMUM_DTMF_REQUEST = 32;
+        private final boolean DTMF_STATUS_START = true;
+        private final boolean DTMF_STATUS_STOP = false;
+
+        private boolean mDtmfStatus = DTMF_STATUS_STOP;
+        private Vector mDtmfQueue = new Vector(MAXIMUM_DTMF_REQUEST);
+
+        private RILRequest mPendingCHLDRequest = null;
+        private boolean mIsSendChldRequest = false;
+    }
+
+    private dtmfQueueHandler mDtmfReqQueue = new dtmfQueueHandler();
+    /* M: call control part end */
+
+    BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent.getAction().equals(Intent.ACTION_SCREEN_ON)) {
+                //[ALPS01664312]-Srart
+                if (!isScreenOn) {
+                    sendScreenState(true);
+                }
+                //[ALPS01664312]-End
+            } else if (intent.getAction().equals(Intent.ACTION_SCREEN_OFF)) {
+                sendScreenState(false);
+            } else if (intent.getAction().equals("com.mtk.TEST_TRM")) {
+                int mode = intent.getIntExtra("mode", 2);
+                Rlog.d(RILJ_LOG_TAG, "RIL received com.mtk.TEST_TRM, mode = " + mode);
+                if (mode == 2 && mInstanceId == 0) {
+                    setTrm(mode, null);
+                }
+            } else {
+                Rlog.w(RILJ_LOG_TAG, "RIL received unexpected Intent: " + intent.getAction());
+            }
+        }/* end of onReceive */
     };
 
     class RILSender extends Handler implements Runnable {
@@ -502,10 +623,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return messageLength;
     }
 
-    protected class RILReceiver implements Runnable {
+    class RILReceiver implements Runnable {
         byte[] buffer;
 
-        protected RILReceiver() {
+        RILReceiver() {
             buffer = new byte[RIL_MAX_COMMAND_BYTES];
         }
 
@@ -524,6 +645,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 } else {
                     rilSocket = SOCKET_NAME_RIL[mInstanceId];
                 }
+
+                /* M: C2K start */
+                int phoneType = TelephonyManager.getPhoneType(mPreferredNetworkType);
+                if (phoneType == PhoneConstants.PHONE_TYPE_CDMA) {
+                    rilSocket = C2K_SOCKET_NAME_RIL;
+                }
+                /* M: C2K end */
 
                 try {
                     s = new LocalSocket();
@@ -547,7 +675,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             "Couldn't find '" + rilSocket
                             + "' socket after " + retryCount
                             + " times, continuing to retry silently");
-                    } else if (retryCount >= 0 && retryCount < 8) {
+                    } else if (retryCount > 0 && retryCount < 8) {
                         Rlog.i (RILJ_LOG_TAG,
                             "Couldn't find '" + rilSocket
                             + "' socket; retrying after timeout");
@@ -565,22 +693,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 retryCount = 0;
 
                 mSocket = s;
-                Rlog.i(RILJ_LOG_TAG, "(" + mInstanceId + ") Connected to '"
-                        + rilSocket + "' socket");
-
-                /* Compatibility with qcom's DSDS (Dual SIM) stack */
-                if (needsOldRilFeature("qcomdsds")) {
-                    String str = "SUB1";
-                    byte[] data = str.getBytes();
-                    try {
-                        mSocket.getOutputStream().write(data);
-                        Rlog.i(RILJ_LOG_TAG, "Data sent!!");
-                    } catch (IOException ex) {
-                            Rlog.e(RILJ_LOG_TAG, "IOException", ex);
-                    } catch (RuntimeException exc) {
-                        Rlog.e(RILJ_LOG_TAG, "Uncaught exception ", exc);
-                    }
-                }
+                Rlog.i(RILJ_LOG_TAG, "Connected to '" + rilSocket + "' socket");
 
                 int length = 0;
                 try {
@@ -613,7 +726,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         "Exception:" + tr.toString());
                 }
 
-                Rlog.i(RILJ_LOG_TAG, "(" + mInstanceId + ") Disconnected from '" + rilSocket
+                Rlog.i(RILJ_LOG_TAG, "Disconnected from '" + rilSocket
                       + "' socket");
 
                 setRadioState (RadioState.RADIO_UNAVAILABLE);
@@ -666,7 +779,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 DEFAULT_WAKE_LOCK_TIMEOUT);
         mWakeLockCount = 0;
 
-        mSenderThread = new HandlerThread("RILSender" + mInstanceId);
+        mSenderThread = new HandlerThread("RILSender");
         mSenderThread.start();
 
         Looper looper = mSenderThread.getLooper();
@@ -677,23 +790,36 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (cm.isNetworkSupported(ConnectivityManager.TYPE_MOBILE) == false) {
             riljLog("Not starting RILReceiver: wifi-only");
         } else {
-            riljLog("Starting RILReceiver" + mInstanceId);
-            mReceiver = createRILReceiver();
-            mReceiverThread = new Thread(mReceiver, "RILReceiver" + mInstanceId);
+            riljLog("Starting RILReceiver");
+            mReceiver = new RILReceiver();
+            mReceiverThread = new Thread(mReceiver, "RILReceiver");
             mReceiverThread.start();
 
             DisplayManager dm = (DisplayManager)context.getSystemService(
                     Context.DISPLAY_SERVICE);
             mDefaultDisplay = dm.getDisplay(Display.DEFAULT_DISPLAY);
             dm.registerDisplayListener(mDisplayListener, null);
+
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            filter.addAction(Intent.ACTION_SCREEN_OFF);
+            filter.addAction("com.mtk.TEST_TRM");
+            context.registerReceiver(mIntentReceiver, filter);
         }
+
+		/*
+        if (!SystemProperties.get("ro.mtk_bsp_package").equals("1")) {
+            try {
+                mServiceStateExt = MPlugin.createInstance(
+                        IServiceStateExt.class.getName(), context);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+		*/
 
         TelephonyDevController tdc = TelephonyDevController.getInstance();
         tdc.registerRIL(this);
-    }
-
-    protected RILReceiver createRILReceiver() {
-        return new RILReceiver();
     }
 
     //***** CommandsInterface implementation
@@ -726,6 +852,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             mNITZTimeRegistrant
                 .notifyRegistrant(
                     new AsyncResult (null, mLastNITZTimeInfo, null));
+            mLastNITZTimeInfo = null;
         }
     }
 
@@ -761,37 +888,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
     // FIXME This API should take an AID and slot ID
     public void setDataAllowed(boolean allowed, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_ALLOW_DATA, result);
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
-                + " " + allowed);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(allowed ? 1 : 0);
-        send(rr);
-    }
-
-    public void
-    getDataCallProfile(int appType, Message result) {
-        if(mRilVersion < 10) {
-            if (result != null) {
-                CommandException ex = new CommandException(
-                    CommandException.Error.REQUEST_NOT_SUPPORTED);
-                AsyncResult.forMessage(result, null, ex);
-                result.sendToTarget();
-            }
-            return;
-        }
-
-        RILRequest rr = RILRequest.obtain(
-                RILConstants.RIL_REQUEST_GET_DATA_CALL_PROFILE, result);
-
-        // count of ints
-        rr.mParcel.writeInt(1);
-        rr.mParcel.writeInt(appType);
-
-        if (RILJ_LOGD) {
-            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
-                   + " : " + appType);
-        }
         send(rr);
     }
 
@@ -808,13 +908,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 1 : 2);
+        rr.mParcel.writeInt(2);
         rr.mParcel.writeString(pin);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -832,14 +928,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 2 : 3);
+        rr.mParcel.writeInt(3);
         rr.mParcel.writeString(puk);
         rr.mParcel.writeString(newPin);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -857,13 +949,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 1 : 2);
+        rr.mParcel.writeInt(2);
         rr.mParcel.writeString(pin);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -881,14 +969,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 2 : 3);
+        rr.mParcel.writeInt(3);
         rr.mParcel.writeString(puk);
         rr.mParcel.writeString(newPin2);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -906,14 +990,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 2 : 3);
+        rr.mParcel.writeInt(3);
         rr.mParcel.writeString(oldPin);
         rr.mParcel.writeString(newPin);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -931,14 +1011,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
-        rr.mParcel.writeInt(oldRil ? 2 : 3);
+        rr.mParcel.writeInt(3);
         rr.mParcel.writeString(oldPin2);
         rr.mParcel.writeString(newPin2);
-
-        if (!oldRil)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         send(rr);
     }
@@ -960,14 +1036,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     @Override
     public void
-    supplyDepersonalization(String netpin, String type, Message result) {
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_DEPERSONALIZATION_CODE, result);
+    supplyNetworkDepersonalization(String netpin, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_NETWORK_DEPERSONALIZATION, result);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) +
-                        " Type:" + type);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mParcel.writeInt(2);
-        rr.mParcel.writeString(type);
+        rr.mParcel.writeInt(1);
         rr.mParcel.writeString(netpin);
 
         send(rr);
@@ -1008,23 +1082,31 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void
     dial(String address, int clirMode, UUSInfo uusInfo, Message result) {
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL, result);
+        if (!PhoneNumberUtils.isUriNumber(address)) {
+           RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL, result);
 
-        rr.mParcel.writeString(address);
-        rr.mParcel.writeInt(clirMode);
+           rr.mParcel.writeString(address);
+           rr.mParcel.writeInt(clirMode);
 
-        if (uusInfo == null) {
-            rr.mParcel.writeInt(0); // UUS information is absent
+           if (uusInfo == null) {
+              rr.mParcel.writeInt(0); // UUS information is absent
+           } else {
+              rr.mParcel.writeInt(1); // UUS information is present
+              rr.mParcel.writeInt(uusInfo.getType());
+              rr.mParcel.writeInt(uusInfo.getDcs());
+              rr.mParcel.writeByteArray(uusInfo.getUserData());
+           }
+
+           if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+           send(rr);
         } else {
-            rr.mParcel.writeInt(1); // UUS information is present
-            rr.mParcel.writeInt(uusInfo.getType());
-            rr.mParcel.writeInt(uusInfo.getDcs());
-            rr.mParcel.writeByteArray(uusInfo.getUserData());
+           RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL_WITH_SIP_URI, result);
+
+           rr.mParcel.writeString(address);
+           if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+           send(rr);
         }
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        send(rr);
     }
 
     @Override
@@ -1038,16 +1120,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
     getIMSIForApp(String aid, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_IMSI, result);
 
-        boolean skipNullAid = needsOldRilFeature("skipnullaid");
-        boolean writeAidOnly = needsOldRilFeature("writeaidonly");
-
-        if (!writeAidOnly && (aid != null || !skipNullAid)) {
-            rr.mParcel.writeInt(1);
-            rr.mParcel.writeString(aid);
-        }
-
-        if (writeAidOnly)
-            rr.mParcel.writeString(aid);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeString(aid);
 
         if (RILJ_LOGD) riljLog(rr.serialString() +
                               "> getIMSI: " + requestToString(rr.mRequest)
@@ -1125,18 +1199,33 @@ public class RIL extends BaseCommands implements CommandsInterface {
                                         result);
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        send(rr);
+        /* M: call control part start */
+        handleChldRelatedRequest(rr);
+        /* M: call control part end */
     }
 
     @Override
     public void
     conference (Message result) {
+
+        /* M: call control part start */
+		/*
+        if (MobileManagerUtils.isSupported()) {
+            if (!checkMoMSSubPermission(SubPermissions.MAKE_CONFERENCE_CALL)) {
+                return;
+            }
+        }
+		*/
+        /* M: call control part end */
+
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_CONFERENCE, result);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        send(rr);
+        /* M: call control part start */
+        handleChldRelatedRequest(rr);
+        /* M: call control part end */
     }
 
 
@@ -1170,7 +1259,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(gsmIndex);
 
-        send(rr);
+        /* M: call control part start */
+        handleChldRelatedRequest(rr);
+        /* M: call control part end */
     }
 
     @Override
@@ -1203,7 +1294,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        send(rr);
+        /* M: call control part start */
+        handleChldRelatedRequest(rr);
+        /* M: call control part end */
     }
 
     @Override
@@ -1337,27 +1430,52 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void
     startDtmf(char c, Message result) {
-        RILRequest rr
-                = RILRequest.obtain(RIL_REQUEST_DTMF_START, result);
+        /* M: call control part start */
+        /* DTMF request will be ignored when the count of requests reaches 32 */
+        synchronized (mDtmfReqQueue) {
+            if (!mDtmfReqQueue.hasSendChldRequest() && mDtmfReqQueue.size() < mDtmfReqQueue.MAXIMUM_DTMF_REQUEST) {
+                if (!mDtmfReqQueue.isStart()) {
+                    RILRequest rr = RILRequest.obtain(RIL_REQUEST_DTMF_START, result);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(Character.toString(c));
-
-        send(rr);
+                    rr.mParcel.writeString(Character.toString(c));
+                    mDtmfReqQueue.start();
+                    mDtmfReqQueue.add(rr);
+                    if (mDtmfReqQueue.size() == 1) {
+                        riljLog("send start dtmf");
+                        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+                        send(rr);
+                    }
+                } else {
+                    riljLog("DTMF status conflict, want to start DTMF when status is " + mDtmfReqQueue.isStart());
+                }
+            }
+        }
+        /* M: call control part end */
     }
-
     @Override
     public void
     stopDtmf(Message result) {
-        RILRequest rr
-                = RILRequest.obtain(RIL_REQUEST_DTMF_STOP, result);
+        /* M: call control part start */
+        /* DTMF request will be ignored when the count of requests reaches 32 */
+        synchronized (mDtmfReqQueue) {
+            if (!mDtmfReqQueue.hasSendChldRequest() && mDtmfReqQueue.size() < mDtmfReqQueue.MAXIMUM_DTMF_REQUEST) {
+                if (mDtmfReqQueue.isStart()) {
+                    RILRequest rr = RILRequest.obtain(RIL_REQUEST_DTMF_STOP, result);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        send(rr);
+                    mDtmfReqQueue.stop();
+                    mDtmfReqQueue.add(rr);
+                    if (mDtmfReqQueue.size() == 1) {
+                        riljLog("send stop dtmf");
+                        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+                        send(rr);
+                    }
+                } else {
+                    riljLog("DTMF status conflict, want to start DTMF when status is " + mDtmfReqQueue.isStart());
+                }
+            }
+        }
+        /* M: call control part end */
     }
-
     @Override
     public void
     sendBurstDtmf(String dtmfString, int on, int off, Message result) {
@@ -1545,105 +1663,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 response);
 
         rr.mParcel.writeInt(status);
-        constructCdmaWriteSmsRilRequest(rr, IccUtils.hexStringToBytes(pdu));
+        rr.mParcel.writeString(pdu);
 
         if (RILJ_LOGV) riljLog(rr.serialString() + "> "
                 + requestToString(rr.mRequest)
                 + " " + status);
 
         send(rr);
-    }
-
-    /**
-     *  Restructures PDU data so that it is consistent with RIL
-     *  data structure.
-     *
-     *  @param pdu The data to be written to the RUIM card.
-     */
-    private void constructCdmaWriteSmsRilRequest(RILRequest rr, byte[] pdu) {
-        int address_nbr_of_digits;
-        int subaddr_nbr_of_digits;
-        int bearerDataLength;
-        ByteArrayInputStream bais = new ByteArrayInputStream(pdu);
-        DataInputStream dis = new DataInputStream(bais);
-
-        try {
-            int teleServiceId = 0;
-            byte servicePresent = 0;
-            int serviceCategory = 0;
-
-            int address_digit_mode = 0;
-            int address_nbr_mode = 0;
-            int address_ton = 0;
-            int address_nbr_plan = 0;
-
-            int subaddressType = 0;
-            byte subaddr_odd = 0;
-
-            teleServiceId = dis.readInt();
-            rr.mParcel.writeInt(teleServiceId);
-            servicePresent = (byte) dis.readInt();
-            rr.mParcel.writeByte(servicePresent);
-            serviceCategory = dis.readInt();
-            rr.mParcel.writeInt(serviceCategory);
-
-            address_digit_mode = dis.readByte();
-            rr.mParcel.writeInt(address_digit_mode);
-            address_nbr_mode = dis.readByte();
-            rr.mParcel.writeInt(address_nbr_mode);
-            address_ton = dis.readByte();
-            rr.mParcel.writeInt(address_ton);
-            address_nbr_plan = dis.readByte();
-            rr.mParcel.writeInt(address_nbr_plan);
-
-            address_nbr_of_digits = dis.readByte();
-            rr.mParcel.writeByte((byte) address_nbr_of_digits);
-            for (int i = 0; i < address_nbr_of_digits; i++) {
-                rr.mParcel.writeByte(dis.readByte()); // address_orig_bytes[i]
-            }
-
-            // int
-            subaddressType = dis.readByte();
-            rr.mParcel.writeInt(subaddressType); // subaddressType
-            subaddr_odd = (byte) dis.readByte();
-            rr.mParcel.writeByte(subaddr_odd); // subaddr_odd
-            subaddr_nbr_of_digits = (byte) dis.readByte();
-            rr.mParcel.writeByte((byte) subaddr_nbr_of_digits);
-            for (int i = 0; i < subaddr_nbr_of_digits; i++) {
-                rr.mParcel.writeByte(dis.readByte()); // subaddr_orig_bytes[i]
-            }
-
-            bearerDataLength = dis.readByte() & 0xff;
-            rr.mParcel.writeInt(bearerDataLength);
-            for (int i = 0; i < bearerDataLength; i++) {
-                rr.mParcel.writeByte(dis.readByte()); // bearerData[i]
-            }
-
-            riljLog(" teleServiceId=" + teleServiceId + " servicePresent=" + servicePresent
-                + " serviceCategory=" + serviceCategory
-                + " address_digit_mode=" + address_digit_mode
-                + " address_nbr_mode=" + address_nbr_mode + " address_ton=" + address_ton
-                + " address_nbr_plan=" + address_nbr_plan
-                + " address_nbr_of_digits=" + address_nbr_of_digits
-                + " subaddressType=" + subaddressType + " subaddr_odd= " + subaddr_odd
-                + " subaddr_nbr_of_digits=" + subaddr_nbr_of_digits
-                + " bearerDataLength=" + bearerDataLength);
-        } catch (IOException ex) {
-            if (RILJ_LOGD) riljLog("sendSmsCdma: conversion from input stream to object failed: "
-                    + ex);
-        } finally {
-            try {
-                if (null != bais) {
-                    bais.close();
-                }
-
-                if (null != dis) {
-                    dis.close();
-                }
-            } catch (IOException e) {
-                if (RILJ_LOGD) riljLog("sendSmsCdma: close input stream exception" + e);
-            }
-        }
     }
 
     /**
@@ -1671,10 +1697,35 @@ public class RIL extends BaseCommands implements CommandsInterface {
     setupDataCall(String radioTechnology, String profile, String apn,
             String user, String password, String authType, String protocol,
             Message result) {
+        /* [Note by mtk01411] In original Android2.1 release: MAX PDP Connection is 1
+        * request_cid is only allowed to set as "1" manually
+        */
+        String interfaceId = "1";
+        setupDataCall(radioTechnology, profile, apn, user, password, authType, protocol, interfaceId, result);
+    }
+
+    @Override
+    public void
+    setupDataCall(String radioTechnology, String profile, String apn,
+            String user, String password, String authType, String protocol,
+            String interfaceId, Message result) {
+        DefaultBearerConfig defaultBearerConfig = new DefaultBearerConfig();
+        setupDataCall(radioTechnology, profile, apn, user, password, authType, protocol, interfaceId, defaultBearerConfig, result);
+    }
+
+    @Override
+    public void
+    setupDataCall(String radioTechnology, String profile, String apn,
+            String user, String password, String authType, String protocol,
+            String interfaceId, DefaultBearerConfig defaultBearerConfig, Message result) {
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SETUP_DATA_CALL, result);
 
-        rr.mParcel.writeInt(7);
+        if (SystemProperties.get("ro.mtk_volte_support").equals("1")) {
+            rr.mParcel.writeInt(17);
+        } else {
+            rr.mParcel.writeInt(8); //the number should be changed according to number of parameters
+        }
 
         rr.mParcel.writeString(radioTechnology);
         rr.mParcel.writeString(profile);
@@ -1684,10 +1735,25 @@ public class RIL extends BaseCommands implements CommandsInterface {
         rr.mParcel.writeString(authType);
         rr.mParcel.writeString(protocol);
 
+        /** M: specify interface Id */
+        rr.mParcel.writeString(interfaceId);
+
+        //VoLTE
+        rr.mParcel.writeString("" + defaultBearerConfig.mIsValid);
+        rr.mParcel.writeString("" + defaultBearerConfig.mQos.qci);
+        rr.mParcel.writeString("" + defaultBearerConfig.mQos.dlGbr);
+        rr.mParcel.writeString("" + defaultBearerConfig.mQos.ulGbr);
+        rr.mParcel.writeString("" + defaultBearerConfig.mQos.dlMbr);
+        rr.mParcel.writeString("" + defaultBearerConfig.mQos.ulMbr);
+        rr.mParcel.writeString("" + defaultBearerConfig.mEmergency_ind);
+        rr.mParcel.writeString("" + defaultBearerConfig.mPcscf_discovery_flag);
+        rr.mParcel.writeString("" + defaultBearerConfig.mSignaling_flag);
+
+
         if (RILJ_LOGD) riljLog(rr.serialString() + "> "
                 + requestToString(rr.mRequest) + " " + radioTechnology + " "
                 + profile + " " + apn + " " + user + " "
-                + password + " " + authType + " " + protocol);
+                + password + " " + authType + " " + protocol + " " + interfaceId + " " + defaultBearerConfig);
 
         send(rr);
     }
@@ -1733,6 +1799,27 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         send(rr);
     }
+
+    //MTK-START [mtk06800] modem power on/off
+    @Override
+    public void setModemPower(boolean power, Message result) {
+
+        if (RILJ_LOGD) riljLog("Set Modem power as: " + power);
+        RILRequest rr;
+
+        if (power) {
+            rr = RILRequest.obtain(RIL_REQUEST_MODEM_POWERON, result);
+        }
+        else {
+            rr = RILRequest.obtain(RIL_REQUEST_MODEM_POWEROFF, result);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> "
+            + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+    //MTK-END [mtk06800] modem power on/off
 
     @Override
     public void
@@ -1892,6 +1979,54 @@ public class RIL extends BaseCommands implements CommandsInterface {
         send(rr);
     }
 
+    /* M: SS part */
+    // mtk00732 add for getCOLP
+    public void
+    getCOLP(Message result) {
+        RILRequest rr
+                //= RILRequest.obtain(RIL_REQUEST_GET_COLP, result, mySimId);
+                = RILRequest.obtain(RIL_REQUEST_GET_COLP, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    // mtk00732 add for setCOLP
+    public void
+    setCOLP(boolean enable, Message result) {
+        RILRequest rr
+                //= RILRequest.obtain(RIL_REQUEST_SET_COLP, result, mySimId);
+                = RILRequest.obtain(RIL_REQUEST_SET_COLP, result);
+
+        // count ints
+        rr.mParcel.writeInt(1);
+
+        if (enable) {
+            rr.mParcel.writeInt(1);
+        } else {
+            rr.mParcel.writeInt(0);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " " + enable);
+
+        send(rr);
+    }
+
+    // mtk00732 add for getCOLR
+    public void
+    getCOLR(Message result) {
+        RILRequest rr
+                //= RILRequest.obtain(RIL_REQUEST_GET_COLR, result, mySimId);
+                = RILRequest.obtain(RIL_REQUEST_GET_COLR, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+    /* M: SS part end */
+
     @Override
     public void
     setNetworkSelectionModeAutomatic(Message response) {
@@ -1935,11 +2070,21 @@ public class RIL extends BaseCommands implements CommandsInterface {
     public void
     getAvailableNetworks(Message response) {
         RILRequest rr
-                = RILRequest.obtain(RIL_REQUEST_QUERY_AVAILABLE_NETWORKS,
+                = RILRequest.obtain(RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT,
                                     response);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
+        send(rr);
+    }
+
+    public void
+    cancelAvailableNetworks(Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_ABORT_QUERY_AVAILABLE_NETWORKS,
+                                    response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
         send(rr);
     }
 
@@ -2020,20 +2165,18 @@ public class RIL extends BaseCommands implements CommandsInterface {
                             Message response) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_FACILITY_LOCK, response);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        boolean oldRil = needsOldRilFeature("facilitylock");
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                                                 + " [" + facility + " " + serviceClass
+                                                 + " " + appId + "]");
 
         // count strings
-        rr.mParcel.writeInt(oldRil ? 3 : 4);
+        rr.mParcel.writeInt(4);
 
         rr.mParcel.writeString(facility);
         rr.mParcel.writeString(password);
 
         rr.mParcel.writeString(Integer.toString(serviceClass));
-
-        if (!oldRil)
-            rr.mParcel.writeString(appId);
+        rr.mParcel.writeString(appId);
 
         send(rr);
     }
@@ -2057,19 +2200,15 @@ public class RIL extends BaseCommands implements CommandsInterface {
                                                         + " [" + facility + " " + lockState
                                                         + " " + serviceClass + " " + appId + "]");
 
-        boolean oldRil = needsOldRilFeature("facilitylock");
-
         // count strings
-        rr.mParcel.writeInt(oldRil ? 4 : 5);
+        rr.mParcel.writeInt(5);
 
         rr.mParcel.writeString(facility);
         lockString = (lockState)?"1":"0";
         rr.mParcel.writeString(lockString);
         rr.mParcel.writeString(password);
         rr.mParcel.writeString(Integer.toString(serviceClass));
-
-        if (!oldRil)
-            rr.mParcel.writeString(appId);
+        rr.mParcel.writeString(appId);
 
         send(rr);
 
@@ -2093,6 +2232,22 @@ public class RIL extends BaseCommands implements CommandsInterface {
         send(rr);
     }
 
+    /* M: SS part */
+    ///M: For query CNAP
+    public void sendCNAPSS(String cnapssString, Message response) {
+        RILRequest rr
+                //= RILRequest.obtain(RIL_REQUEST_SEND_CNAP, response, mySimId);
+                = RILRequest.obtain(RIL_REQUEST_SEND_CNAP, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + " " + cnapssString);
+
+        rr.mParcel.writeString(cnapssString);
+
+        send(rr);
+    }
+    /* M: SS part end */
+
     // inherited javadoc suffices
     @Override
     public void cancelPendingUssd (Message response) {
@@ -2114,53 +2269,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         send(rr);
-    }
-
-
-    @Override
-    public void setLocalCallHold(int lchStatus) {
-        byte[] payload = new byte[]{(byte)(lchStatus & 0x7F)};
-        Rlog.d(RILJ_LOG_TAG, "setLocalCallHold: lchStatus is " + lchStatus);
-
-        sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_SET_LOCAL_CALL_HOLD, 1, payload, null);
-    }
-
-    @Override
-    public void getModemCapability(Message response) {
-        Rlog.d(RILJ_LOG_TAG, "GetModemCapability");
-        sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_GET_MODEM_CAPABILITY, 0, null, response);
-    }
-
-    @Override
-    public void updateStackBinding(int stack, int enable, Message response) {
-        byte[] payload = new byte[]{(byte)stack,(byte)enable};
-        Rlog.d(RILJ_LOG_TAG, "UpdateStackBinding: on Stack: " + stack +
-                ", enable/disable: " + enable);
-
-        sendOemRilRequestRaw(OEMHOOK_EVT_HOOK_UPDATE_SUB_BINDING, 2, payload, response);
-    }
-
-
-    private void sendOemRilRequestRaw(int requestId, int numPayload, byte[] payload,
-            Message response) {
-        byte[] request = new byte[mHeaderSize + numPayload * BYTE_SIZE];
-
-        ByteBuffer buf= ByteBuffer.wrap(request);
-        buf.order(ByteOrder.nativeOrder());
-
-        // Add OEM identifier String
-        buf.put(OEM_IDENTIFIER.getBytes());
-        // Add Request ID
-        buf.putInt(requestId);
-        if (numPayload > 0 && payload != null) {
-            // Add Request payload length
-            buf.putInt(numPayload * BYTE_SIZE);
-            for (byte b : payload) {
-                buf.put(b);
-            }
-        }
-
-        invokeOemRilRequestRaw(request, response);
     }
 
     @Override
@@ -2276,7 +2384,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
      */
     @Override
     public void handleCallSetupRequestFromSim(
-            boolean accept, Message response) {
+            boolean accept, int resCode, Message response) {
 
         RILRequest rr = RILRequest.obtain(
             RILConstants.RIL_REQUEST_STK_HANDLE_CALL_SETUP_REQUESTED_FROM_SIM,
@@ -2285,7 +2393,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         int[] param = new int[1];
-        param[0] = accept ? 1 : 0;
+        if (resCode == 0x21 || resCode == 0x20) {
+            param[0] = resCode;
+        } else {
+            param[0] = accept ? 1 : 0;
+        }
         rr.mParcel.writeIntArray(param);
         send(rr);
     }
@@ -2301,6 +2413,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(networkType);
 
+        mPreviousPreferredType = mPreferredNetworkType; //ALPS00799783
         mPreferredNetworkType = networkType;
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
@@ -2340,6 +2453,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
      */
     @Override
     public void setLocationUpdates(boolean enable, Message response) {
+        //MTK-START [ALPS00093395]Consider screen on/off state
+        PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
+        if ((pm.isScreenOn()) && (false == enable)) return;
+        //MTK-END [ALPS00093395]Consider screen on/off state
+
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_LOCATION_UPDATES, response);
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(enable ? 1 : 0);
@@ -2482,7 +2600,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
     }
 
-    protected void sendScreenState(boolean on) {
+    /**
+     * {@inheritDoc}
+     */
+    public void sendScreenState(boolean on) {
+        //MTK-START [mtk04070][111207][ALPS00093395]Store screen on/off state
+        isScreenOn = on;
+        //MTK-END [mtk04070][111207][ALPS00093395]Store screen on/off state
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SCREEN_STATE, null);
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(on ? 1 : 0);
@@ -2501,21 +2625,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
         updateScreenState();
    }
 
-    protected RadioState getRadioStateFromInt(int stateInt) {
+    private RadioState getRadioStateFromInt(int stateInt) {
         RadioState state;
 
         /* RIL_RadioState ril.h */
         switch(stateInt) {
             case 0: state = RadioState.RADIO_OFF; break;
             case 1: state = RadioState.RADIO_UNAVAILABLE; break;
-            case 2:
-            case 3:
-            case 4:
-            case 5:
-            case 6:
-            case 7:
-            case 8:
-            case 9:
             case 10: state = RadioState.RADIO_ON; break;
 
             default:
@@ -2525,7 +2641,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return state;
     }
 
-    protected void switchToRadioState(RadioState newState) {
+    private void switchToRadioState(RadioState newState) {
         setRadioState(newState);
     }
 
@@ -2576,7 +2692,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
     }
 
-    protected void
+    private void
     send(RILRequest rr) {
         Message msg;
 
@@ -2593,7 +2709,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         msg.sendToTarget();
     }
 
-    protected void
+    private void
     processResponse (Parcel p) {
         int type;
 
@@ -2615,7 +2731,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
      * @param error is the RIL_Errno sent back
      * @param loggable true means to print all requests in mRequestList
      */
-    protected void clearRequestList(int error, boolean loggable) {
+    private void clearRequestList(int error, boolean loggable) {
         RILRequest rr;
         synchronized (mRequestList) {
             int count = mRequestList.size();
@@ -2639,7 +2755,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
     }
 
-    protected RILRequest findAndRemoveRequestFromList(int serial) {
+    private RILRequest findAndRemoveRequestFromList(int serial) {
         RILRequest rr = null;
         synchronized (mRequestList) {
             rr = mRequestList.get(serial);
@@ -2651,7 +2767,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return rr;
     }
 
-    protected RILRequest
+    private RILRequest
     processSolicited (Parcel p) {
         int serial, error;
         boolean found = false;
@@ -2669,7 +2785,55 @@ public class RIL extends BaseCommands implements CommandsInterface {
             return null;
         }
 
+        /* M: call control part start */
+        /* DTMF request will be ignored when the count of requests reaches 32 */
+        if ((rr.mRequest == RIL_REQUEST_DTMF_START) ||
+            (rr.mRequest == RIL_REQUEST_DTMF_STOP)) {
+            synchronized (mDtmfReqQueue) {
+                mDtmfReqQueue.remove(rr);
+                riljLog("remove first item in dtmf queue done, size = " + mDtmfReqQueue.size());
+                if (mDtmfReqQueue.size() > 0) {
+                    RILRequest rr2 = mDtmfReqQueue.get();
+                    if (RILJ_LOGD) riljLog(rr2.serialString() + "> " + requestToString(rr2.mRequest));
+                    send(rr2);
+                } else {
+                    if (mDtmfReqQueue.getPendingRequest() != null) {
+                        riljLog("send pending switch request");
+                        send(mDtmfReqQueue.getPendingRequest());
+                        mDtmfReqQueue.setSendChldRequest();
+                        mDtmfReqQueue.setPendingRequest(null);
+                    }
+                }
+            }
+        }
+        /* M: call control part end */
         Object ret = null;
+
+        if ((rr.mRequest == RIL_REQUEST_QUERY_AVAILABLE_NETWORKS) ||
+            (rr.mRequest == RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT)) {
+            mGetAvailableNetworkDoneRegistrant.notifyRegistrants();
+        }
+
+        /* ALPS00799783 START */
+        if (rr.mRequest == RIL_REQUEST_SET_PREFERRED_NETWORK_TYPE) {
+            if ((error != 0) && (mPreviousPreferredType != -1)) {
+                riljLog("restore mPreferredNetworkType from " + mPreferredNetworkType + " to " + mPreviousPreferredType);
+                mPreferredNetworkType = mPreviousPreferredType;
+            }
+            mPreviousPreferredType = -1; //reset
+        }
+        /* ALPS00799783 END */
+
+
+        /* M: call control part start */
+        if (rr.mRequest == RIL_REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE ||
+            rr.mRequest == RIL_REQUEST_CONFERENCE ||
+            rr.mRequest == RIL_REQUEST_SEPARATE_CONNECTION ||
+            rr.mRequest == RIL_REQUEST_EXPLICIT_CALL_TRANSFER) {
+            riljLog("clear mIsSendChldRequest");
+            mDtmfReqQueue.resetSendChldRequest();
+        }
+        /* M: call control part end */
 
         if (error == 0 || p.dataAvail() > 0) {
             // either command succeeds or command fails but with data payload
@@ -2686,7 +2850,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_ENTER_SIM_PUK2: ret =  responseInts(p); break;
             case RIL_REQUEST_CHANGE_SIM_PIN: ret =  responseInts(p); break;
             case RIL_REQUEST_CHANGE_SIM_PIN2: ret =  responseInts(p); break;
-            case RIL_REQUEST_ENTER_DEPERSONALIZATION_CODE: ret =  responseInts(p); break;
+            case RIL_REQUEST_ENTER_NETWORK_DEPERSONALIZATION: ret =  responseInts(p); break;
             case RIL_REQUEST_GET_CURRENT_CALLS: ret =  responseCallList(p); break;
             case RIL_REQUEST_DIAL: ret =  responseVoid(p); break;
             case RIL_REQUEST_GET_IMSI: ret =  responseString(p); break;
@@ -2709,7 +2873,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_SIGNAL_STRENGTH: ret =  responseSignalStrength(p); break;
             case RIL_REQUEST_VOICE_REGISTRATION_STATE: ret =  responseStrings(p); break;
             case RIL_REQUEST_DATA_REGISTRATION_STATE: ret =  responseStrings(p); break;
-            case RIL_REQUEST_OPERATOR: ret =  responseStrings(p); break;
+            case RIL_REQUEST_OPERATOR: ret =  responseOperator(p); break;
             case RIL_REQUEST_RADIO_POWER: ret =  responseVoid(p); break;
             case RIL_REQUEST_DTMF: ret =  responseVoid(p); break;
             case RIL_REQUEST_SEND_SMS: ret =  responseSMS(p); break;
@@ -2728,7 +2892,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_GET_IMEI: ret =  responseString(p); break;
             case RIL_REQUEST_GET_IMEISV: ret =  responseString(p); break;
             case RIL_REQUEST_ANSWER: ret =  responseVoid(p); break;
-            case RIL_REQUEST_DEACTIVATE_DATA_CALL: ret =  responseVoid(p); break;
+            case RIL_REQUEST_DEACTIVATE_DATA_CALL: ret = responseDeactivateDataCall(p); break; //VoLTE
             case RIL_REQUEST_QUERY_FACILITY_LOCK: ret =  responseInts(p); break;
             case RIL_REQUEST_SET_FACILITY_LOCK: ret =  responseInts(p); break;
             case RIL_REQUEST_CHANGE_BARRING_PASSWORD: ret =  responseVoid(p); break;
@@ -2736,6 +2900,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC: ret =  responseVoid(p); break;
             case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL: ret =  responseVoid(p); break;
             case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS : ret =  responseOperatorInfos(p); break;
+            case RIL_REQUEST_ABORT_QUERY_AVAILABLE_NETWORKS: ret =  responseVoid(p); break;
             case RIL_REQUEST_DTMF_START: ret =  responseVoid(p); break;
             case RIL_REQUEST_DTMF_STOP: ret =  responseVoid(p); break;
             case RIL_REQUEST_BASEBAND_VERSION: ret =  responseString(p); break;
@@ -2792,7 +2957,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_REPORT_SMS_MEMORY_STATUS: ret = responseVoid(p); break;
             case RIL_REQUEST_REPORT_STK_SERVICE_IS_RUNNING: ret = responseVoid(p); break;
             case RIL_REQUEST_CDMA_GET_SUBSCRIPTION_SOURCE: ret =  responseInts(p); break;
-            case RIL_REQUEST_GET_DATA_CALL_PROFILE: ret =  responseGetDataCallProfile(p); break;
             case RIL_REQUEST_ISIM_AUTHENTICATION: ret =  responseString(p); break;
             case RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU: ret = responseVoid(p); break;
             case RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS: ret = responseICC_IO(p); break;
@@ -2807,7 +2971,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_SIM_OPEN_CHANNEL: ret  = responseInts(p); break;
             case RIL_REQUEST_SIM_CLOSE_CHANNEL: ret  = responseVoid(p); break;
             case RIL_REQUEST_SIM_TRANSMIT_APDU_CHANNEL: ret = responseICC_IO(p); break;
-            case RIL_REQUEST_SIM_GET_ATR: ret = responseString(p); break;
             case RIL_REQUEST_NV_READ_ITEM: ret = responseString(p); break;
             case RIL_REQUEST_NV_WRITE_ITEM: ret = responseVoid(p); break;
             case RIL_REQUEST_NV_WRITE_CDMA_PRL: ret = responseVoid(p); break;
@@ -2817,6 +2980,134 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_GET_HARDWARE_CONFIG: ret = responseHardwareConfig(p); break;
             case RIL_REQUEST_SIM_AUTHENTICATION: ret =  responseICC_IOBase64(p); break;
             case RIL_REQUEST_SHUTDOWN: ret = responseVoid(p); break;
+            case RIL_REQUEST_GET_PHONE_RAT_FAMILY: ret =  responseInts(p); break;
+            case RIL_REQUEST_SET_PHONE_RAT_FAMILY: ret =  responsePhoneId(); break;
+
+            /* M: call control part start */
+            case RIL_REQUEST_HANGUP_ALL: ret =  responseVoid(p); break;
+            case RIL_REQUEST_FORCE_RELEASE_CALL: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_CALL_INDICATION: ret = responseVoid(p); break;
+            case RIL_REQUEST_EMERGENCY_DIAL: ret =  responseVoid(p); break;
+            case RIL_REQUEST_SET_ECC_SERVICE_CATEGORY: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_ECC_LIST: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_SPEECH_CODEC_INFO: ret = responseVoid(p); break;
+            /* M: call control part end */
+
+            /// M: IMS feature. @{
+            case RIL_REQUEST_ADD_IMS_CONFERENCE_CALL_MEMBER: responseString(p); break;
+            case RIL_REQUEST_REMOVE_IMS_CONFERENCE_CALL_MEMBER: responseString(p); break;
+            case RIL_REQUEST_DIAL_WITH_SIP_URI: ret = responseVoid(p); break;
+            case RIL_REQUEST_RETRIEVE_HELD_CALL: ret = responseVoid(p); break;
+            /// @}
+
+            //MTK-START SIM ME lock
+            case RIL_REQUEST_QUERY_SIM_NETWORK_LOCK: ret =  responseInts(p); break;
+            case RIL_REQUEST_SET_SIM_NETWORK_LOCK: ret =  responseInts(p); break;
+            //MTK-END SIM ME lock
+            //MTK-START multiple application support
+            case RIL_REQUEST_GENERAL_SIM_AUTH: ret =  responseICC_IO(p); break;
+            case RIL_REQUEST_OPEN_ICC_APPLICATION: ret = responseInts(p); break;
+            case RIL_REQUEST_GET_ICC_APPLICATION_STATUS: ret = responseIccCardStatus(p); break;
+            //MTK-END multiple application support
+            case RIL_REQUEST_SIM_IO_EX: ret =  responseICC_IO(p); break;
+            // PHB Start
+            case RIL_REQUEST_QUERY_PHB_STORAGE_INFO: ret = responseInts(p); break;
+            case RIL_REQUEST_WRITE_PHB_ENTRY: ret = responseVoid(p); break;
+            case RIL_REQUEST_READ_PHB_ENTRY: ret = responsePhbEntries(p); break;
+            case RIL_REQUEST_QUERY_UPB_CAPABILITY: ret = responseInts(p); break;
+            case RIL_REQUEST_READ_UPB_GRP: ret = responseInts(p); break;
+            case RIL_REQUEST_WRITE_UPB_GRP: ret = responseVoid(p); break;
+            case RIL_REQUEST_EDIT_UPB_ENTRY: ret = responseVoid(p); break;
+            case RIL_REQUEST_DELETE_UPB_ENTRY: ret = responseVoid(p); break;
+            case RIL_REQUEST_READ_UPB_GAS_LIST: ret = responseStrings(p); break;
+            case RIL_REQUEST_GET_PHB_STRING_LENGTH: ret = responseInts(p); break;
+            case RIL_REQUEST_GET_PHB_MEM_STORAGE : ret = responseGetPhbMemStorage(p); break;
+            case RIL_REQUEST_SET_PHB_MEM_STORAGE : responseVoid(p); break;
+            case RIL_REQUEST_READ_PHB_ENTRY_EXT: ret = responseReadPhbEntryExt(p); break;
+            case RIL_REQUEST_WRITE_PHB_ENTRY_EXT: ret = responseVoid(p); break;
+            // PHB End
+
+
+            /* M: network part start */
+            case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL_WITH_ACT: ret =  responseVoid(p); break;
+            case RIL_REQUEST_GET_POL_CAPABILITY: ret = responseInts(p); break;
+            case RIL_REQUEST_GET_POL_LIST: ret = responseNetworkInfoWithActs(p); break;
+            case RIL_REQUEST_SET_POL_ENTRY: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_TRM: ret = responseInts(p); break;
+            case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT : ret =  responseOperatorInfosWithAct(p); break;
+            case RIL_REQUEST_STK_EVDL_CALL_BY_AP: ret = responseVoid(p); break;
+
+            //Femtocell (CSG) feature START
+            case RIL_REQUEST_GET_FEMTOCELL_LIST: ret = responseFemtoCellInfos(p); break;
+            case RIL_REQUEST_ABORT_FEMTOCELL_LIST: ret = responseVoid(p); break;
+            case RIL_REQUEST_SELECT_FEMTOCELL: ret = responseVoid(p); break;
+            //Femtocell (CSG) feature END
+            /* M: network part end */
+
+            case RIL_REQUEST_QUERY_MODEM_TYPE: ret = responseInts(p); break;
+            case RIL_REQUEST_STORE_MODEM_TYPE: ret = responseVoid(p); break;
+
+            // IMS
+            case RIL_REQUEST_SET_IMS_ENABLE: ret = responseVoid(p); break;
+            case RIL_REQUEST_SIM_GET_ATR: ret = responseString(p); break;
+            // M: Fast Dormancy
+            case RIL_REQUEST_SET_SCRI: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_FD_MODE: ret = responseInts(p); break;
+
+            // MTK-START, SMS part
+            case RIL_REQUEST_GET_SMS_PARAMS: ret = responseSmsParams(p); break;
+            case RIL_REQUEST_SET_SMS_PARAMS: ret = responseVoid(p); break;
+            case RIL_REQUEST_GET_SMS_SIM_MEM_STATUS: ret = responseSimSmsMemoryStatus(p); break;
+            case RIL_REQUEST_SET_ETWS: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_CB_CHANNEL_CONFIG_INFO: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_CB_LANGUAGE_CONFIG_INFO: ret = responseVoid(p); break;
+            case RIL_REQUEST_GET_CB_CONFIG_INFO: ret = responseCbConfig(p); break;
+            case RIL_REQUEST_REMOVE_CB_MESSAGE: ret = responseVoid(p); break;
+            // MTK-END, SMS part
+            case RIL_REQUEST_SET_DATA_CENTRIC: ret = responseVoid(p); break;
+
+            //VoLTE
+            case RIL_REQUEST_SETUP_DEDICATE_DATA_CALL: ret = responseSetupDedicateDataCall(p); break;
+            case RIL_REQUEST_DEACTIVATE_DEDICATE_DATA_CALL: ret = responseVoid(p); break;
+            case RIL_REQUEST_MODIFY_DATA_CALL: ret = responseModifyDataCall(p); break;
+            case RIL_REQUEST_ABORT_SETUP_DATA_CALL: ret = responseVoid(p); break;
+            case RIL_REQUEST_PCSCF_DISCOVERY_PCO: ret=responsePcscfDiscovery(p); break;
+            case RIL_REQUEST_CLEAR_DATA_BEARER: ret=responseVoid(p); break;
+            // M: CC33 LTE.
+            case RIL_REQUEST_SET_DATA_ON_TO_MD: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_REMOVE_RESTRICT_EUTRAN_MODE: ret = responseVoid(p); break;
+
+            case RIL_REQUEST_BTSIM_CONNECT: ret = responseString(p); break;
+            case RIL_REQUEST_BTSIM_DISCONNECT_OR_POWEROFF: ret = responseVoid(p); break;
+            case RIL_REQUEST_BTSIM_POWERON_OR_RESETSIM: ret = responseString(p); break;
+            case RIL_REQUEST_BTSIM_TRANSFERAPDU: ret = responseString(p); break;
+
+            /* M: call control part start */
+            case RIL_REQUEST_SET_IMS_CALL_STATUS: ret = responseVoid(p); break;
+            /* M: call control part end */
+ 
+            /* M: C2K part start */
+            case RIL_REQUEST_GET_NITZ_TIME: ret = responseGetNitzTime(p); break;
+            case RIL_REQUEST_QUERY_UIM_INSERTED: ret = responseInts(p); break;
+            case RIL_REQUEST_SWITCH_HPF: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_AVOID_SYS: ret = responseVoid(p); break;
+            case RIL_REQUEST_QUERY_AVOID_SYS: ret = responseInts(p); break;
+            case RIL_REQUEST_QUERY_CDMA_NETWORK_INFO: ret = responseStrings(p); break;
+            case RIL_REQUEST_GET_LOCAL_INFO: ret =  responseInts(p); break;
+            case RIL_REQUEST_UTK_REFRESH: ret =  responseVoid(p); break;
+            case RIL_REQUEST_QUERY_SMS_AND_PHONEBOOK_STATUS: ret = responseInts(p); break;
+            case RIL_REQUEST_QUERY_NETWORK_REGISTRATION: ret = responseInts(p); break;
+            case RIL_REQUEST_AGPS_TCP_CONNIND: ret = responseVoid(p); break;
+            case RIL_REQUEST_AGPS_SET_MPC_IPPORT: ret = responseVoid(p); break;
+            case RIL_REQUEST_AGPS_GET_MPC_IPPORT: ret = responseStrings(p); break;
+            case RIL_REQUEST_SET_MEID: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_REG_RESUME: ret =  responseVoid(p); break;
+            case RIL_REQUEST_ENABLE_REG_PAUSE: ret =  responseVoid(p); break;
+            case RIL_REQUEST_SET_ETS_DEV: ret =  responseVoid(p); break;
+            case RIL_REQUEST_WRITE_MDN: ret =  responseVoid(p); break;
+            case RIL_REQUEST_SET_VIA_TRM: ret = responseVoid(p); break;
+            case RIL_REQUEST_SET_ARSI_THRESHOLD: ret =  responseVoid(p); break;
+            /* M: C2K part end */
             default:
                 throw new RuntimeException("Unrecognized solicited response: " + rr.mRequest);
             //break;
@@ -2873,6 +3164,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
                         }
                         mIccStatusChangedRegistrants.notifyRegistrants();
                     }
+                    break;
+
+                case RIL_REQUEST_SET_PHONE_RAT_FAMILY:
+                    if (RILJ_LOGD) {
+                        riljLog("Set phone RAT failed, send response with phone ID");
+                    }
+                    ret = responsePhoneId();
                     break;
             }
 
@@ -2964,7 +3262,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return s;
     }
 
-    protected void
+    private void
     processUnsolicited (Parcel p) {
         int response;
         Object ret;
@@ -2980,7 +3278,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
             case RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED: ret =  responseVoid(p); break;
             case RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED: ret =  responseVoid(p); break;
-            case RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED: ret =  responseVoid(p); break;
+            case RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED: ret =  responseStrings(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS: ret =  responseString(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS_STATUS_REPORT: ret =  responseString(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS_ON_SIM: ret =  responseInts(p); break;
@@ -3015,13 +3313,95 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_VOICE_RADIO_TECH_CHANGED: ret =  responseInts(p); break;
             case RIL_UNSOL_CELL_INFO_LIST: ret = responseCellInfoList(p); break;
             case RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED: ret =  responseVoid(p); break;
+
+            case RIL_UNSOL_NEIGHBORING_CELL_INFO: ret = responseStrings(p); break;
+            case RIL_UNSOL_NETWORK_INFO: ret = responseStrings(p); break;
+            case RIL_UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED: ret =  responseVoid(p); break;
+            case RIL_UNSOL_INVALID_SIM:  ret = responseStrings(p); break;
+            case RIL_UNSOL_RESPONSE_ACMT: ret = responseInts(p); break;
+            case RIL_UNSOL_IMEI_LOCK: ret = responseVoid(p); break;
+            case RIL_UNSOL_RESPONSE_MMRR_STATUS_CHANGED: ret = responseInts(p); break;
+            case RIL_UNSOL_STK_EVDL_CALL: ret = responseInts(p); break;
+            case RIL_UNSOL_STK_CALL_CTRL: ret = responseStrings(p); break;
+
             case RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED: ret =  responseInts(p); break;
             case RIL_UNSOL_SRVCC_STATE_NOTIFY: ret = responseInts(p); break;
             case RIL_UNSOL_HARDWARE_CONFIG_CHANGED: ret = responseHardwareConfig(p); break;
-            case RIL_UNSOL_ON_SS: ret =  responseSsData(p); break;
-            case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: ret =  responseString(p); break;
-            case RIL_UNSOL_STK_SEND_SMS_RESULT: ret = responseInts(p); break; // Samsung STK
+            case RIL_UNSOL_SET_PHONE_RAT_FAMILY_COMPLETE:
+                    ret = responseSetPhoneRatChanged(p); break;
+            /* M: call control part start */
+            case RIL_UNSOL_CALL_FORWARDING: ret = responseInts(p); break;
+            case RIL_UNSOL_CRSS_NOTIFICATION: ret = responseCrssNotification(p); break;
+            case RIL_UNSOL_INCOMING_CALL_INDICATION: ret = responseStrings(p); break;
+            case RIL_UNSOL_CIPHER_INDICATION: ret = responseStrings(p); break;
+            case RIL_UNSOL_CNAP: ret = responseStrings(p); break;
+            case RIL_UNSOL_SPEECH_CODEC_INFO: ret =  responseInts(p); break;
+            /* M: call control part end */
+            //MTK-START multiple application support
+            case RIL_UNSOL_APPLICATION_SESSION_ID_CHANGED: ret = responseInts(p); break;
+            //MTK-END multiple application support
+            case RIL_UNSOL_SIM_MISSING: ret = responseInts(p); break;
+            case RIL_UNSOL_SIM_RECOVERY: ret = responseInts(p); break;
+            case RIL_UNSOL_VIRTUAL_SIM_ON: ret = responseInts(p); break;
+            case RIL_UNSOL_VIRTUAL_SIM_OFF: ret = responseInts(p); break;
+            case RIL_UNSOL_SIM_PLUG_OUT: ret = responseVoid(p); break;
+            case RIL_UNSOL_SIM_PLUG_IN: ret = responseVoid(p); break;
+            case RIL_UNSOL_SIM_COMMON_SLOT_NO_CHANGED: ret = responseVoid(p); break;
+            case RIL_UNSOL_DATA_ALLOWED: ret = responseVoid(p); break;
+            case RIL_UNSOL_PHB_READY_NOTIFICATION: ret = responseInts(p); break;
+            case RIL_UNSOL_STK_SETUP_MENU_RESET: ret = responseVoid(p); break;
+            // IMS
+            case RIL_UNSOL_IMS_ENABLE_DONE: ret = responseVoid(p); break;
+            case RIL_UNSOL_IMS_DISABLE_DONE: ret = responseVoid(p); break;
+            case RIL_UNSOL_IMS_REGISTRATION_INFO: ret = responseInts(p); break;
+            //VoLTE
+            case RIL_UNSOL_DEDICATE_BEARER_ACTIVATED: ret = responseSetupDedicateDataCall(p);break;
+            case RIL_UNSOL_DEDICATE_BEARER_MODIFIED: ret = responseSetupDedicateDataCall(p);break;
+            case RIL_UNSOL_DEDICATE_BEARER_DEACTIVATED: ret = responseInts(p);break;
+            // M: Fast Dormancy
+            case RIL_UNSOL_SCRI_RESULT: ret = responseInts(p); break;
 
+            case RIL_UNSOL_RESPONSE_PLMN_CHANGED: ret = responseStrings(p); break;
+            case RIL_UNSOL_RESPONSE_REGISTRATION_SUSPENDED: ret = responseInts(p); break;
+            //Remote SIM ME lock related APIs [Start]
+            case RIL_UNSOL_MELOCK_NOTIFICATION: ret = responseInts(p); break;
+            //Remote SIM ME lock related APIs [End]
+            case RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_SUPPORT: ret = responseInts(p); break;
+
+            /// M: IMS feature. @{
+            //For updating call ids for conference call after SRVCC is done.
+            case RIL_UNSOL_ECONF_SRVCC_INDICATION: ret = responseInts(p); break;
+            //For updating conference call merged/added result.
+            case RIL_UNSOL_ECONF_RESULT_INDICATION: ret = responseStrings(p); break;
+            //For updating call mode and pau information.
+            case RIL_UNSOL_CALL_INFO_INDICATION : ret = responseStrings(p); break;
+            /// @}
+
+            case RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_INFO: ret = responseInts(p); break;
+            case RIL_UNSOL_SRVCC_HANDOVER_INFO_INDICATION:ret = responseInts(p); break;
+            // M: CC33 LTE.
+            case RIL_UNSOL_RAC_UPDATE: ret = responseVoid(p); break;
+            case RIL_UNSOL_REMOVE_RESTRICT_EUTRAN: ret = responseVoid(p); break;
+
+            //MTK-START for MD state change
+            case RIL_UNSOL_MD_STATE_CHANGE: ret = responseInts(p); break;
+            //MTK-END for MD state change
+            
+            case RIL_UNSOL_MO_DATA_BARRING_INFO: ret = responseInts(p); break;
+            case RIL_UNSOL_SSAC_BARRING_INFO: ret = responseInts(p); break;
+//MTK_TC1_FEATURE for LGE CSMCC_MO_CALL_MODIFIED { 
+            case RIL_UNSOL_RESPONSE_MO_CALL_STATE_CHANGED: ret =  responseStrings(p); break; 
+//}  
+            /* M: C2K part start*/
+            case RIL_UNSOL_CDMA_CALL_ACCEPTED: ret = responseVoid(p); break;
+            case RIL_UNSOL_UTK_SESSION_END: ret = responseVoid(p); break;
+            case RIL_UNSOL_UTK_PROACTIVE_COMMAND: ret = responseString(p); break;
+            case RIL_UNSOL_UTK_EVENT_NOTIFY: ret = responseString(p); break;
+            case RIL_UNSOL_VIA_GPS_EVENT: ret = responseInts(p); break;
+            case RIL_UNSOL_VIA_NETWORK_TYPE_CHANGE: ret = responseInts(p); break;
+            case RIL_UNSOL_VIA_PLMN_CHANGE_REG_PAUSE: ret = responseStrings(p); break;
+            case RIL_UNSOL_VIA_INVALID_SIM_DETECTED: ret = responseVoid(p); break;
+            /* M: C2K part end*/
             default:
                 throw new RuntimeException("Unrecognized unsol response: " + response);
             //break; (implied)
@@ -3052,10 +3432,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     .notifyRegistrants(new AsyncResult(null, null, null));
             break;
             case RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED:
-                if (RILJ_LOGD) unsljLog(response);
+				//M: Add info to parse before pollState
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
 
                 mVoiceNetworkStateRegistrants
-                    .notifyRegistrants(new AsyncResult(null, null, null));
+                    .notifyRegistrants(new AsyncResult (null, ret, null));
             break;
             case RIL_UNSOL_RESPONSE_NEW_SMS: {
                 if (RILJ_LOGD) unsljLog(response);
@@ -3133,10 +3514,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
                         mNITZTimeRegistrant
                             .notifyRegistrant(new AsyncResult (null, result, null));
+                    } else {
+                        // in case NITZ time registrant isnt registered yet
+                        mLastNITZTimeInfo = result;
                     }
-                    // in case NITZ time registrant isn't registered yet, or a new registrant
-                    // registers later
-                    mLastNITZTimeInfo = result;
                 }
             break;
 
@@ -3152,10 +3533,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             break;
             case RIL_UNSOL_DATA_CALL_LIST_CHANGED:
                 if (RILJ_LOGD) unsljLogRet(response, ret);
-
-                boolean oldRil = needsOldRilFeature("skipbrokendatacall");
-                if (oldRil && "IP".equals(((ArrayList<DataCallResponse>)ret).get(0).type))
-                    break;
 
                 mDataNetworkStateRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
             break;
@@ -3208,9 +3585,15 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_SIM_SMS_STORAGE_FULL:
                 if (RILJ_LOGD) unsljLog(response);
 
+                // MTK-START, SMS part
                 if (mIccSmsFullRegistrant != null) {
                     mIccSmsFullRegistrant.notifyRegistrant();
+                } else {
+                    // Phone process is not ready and cache it then wait register to notify
+                    if (RILJ_LOGD) Rlog.d(RILJ_LOG_TAG, "Cache sim sms full event");
+                    mIsSmsSimFull = true;
                 }
+                // MTK-END, SMS part
                 break;
 
             case RIL_UNSOL_SIM_REFRESH:
@@ -3259,7 +3642,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 break;
 
             case RIL_UNSOL_RESPONSE_NEW_BROADCAST_SMS:
-                if (RILJ_LOGD) unsljLogvRet(response, IccUtils.bytesToHexString((byte[])ret));
+                if (RILJ_LOGD) unsljLog(response);
 
                 if (mGsmBroadcastSmsRegistrant != null) {
                     mGsmBroadcastSmsRegistrant
@@ -3318,14 +3701,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 break;
 
             case RIL_UNSOL_OEM_HOOK_RAW:
-                if (RILJ_LOGD) unsljLogvRet(response, IccUtils.bytesToHexString((byte[]) ret));
-                ByteBuffer oemHookResponse = ByteBuffer.wrap((byte[]) ret);
-                oemHookResponse.order(ByteOrder.nativeOrder());
-                if (isQcUnsolOemHookResp(oemHookResponse)) {
-                    Rlog.d(RILJ_LOG_TAG, "OEM ID check Passed");
-                    processUnsolOemhookResponse(oemHookResponse);
-                } else if (mUnsolOemHookRawRegistrant != null) {
-                    Rlog.d(RILJ_LOG_TAG, "External OEM message, to be notified");
+                if (RILJ_LOGD) unsljLogvRet(response, IccUtils.bytesToHexString((byte[])ret));
+                if (mUnsolOemHookRawRegistrant != null) {
                     mUnsolOemHookRawRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
                 }
                 break;
@@ -3387,12 +3764,19 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_RIL_CONNECTED: {
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
+                // Set ecc list before MO call
+                if  (TelephonyManager.getDefault().getMultiSimConfiguration() == TelephonyManager.MultiSimVariants.DSDA
+                        || mInstanceId == 0) {
+                    setEccList();
+                }
+
                 // Initial conditions
-                setRadioPower(false, null);
+                //setRadioPower(false, null);
                 setPreferredNetworkType(mPreferredNetworkType, null);
                 setCdmaSubscriptionSource(mCdmaSubscription, null);
                 setCellInfoListRate(Integer.MAX_VALUE, null);
                 notifyRegistrantsRilConnectionChanged(((int[])ret)[0]);
+                sendScreenState(isScreenOn);
                 break;
             }
             case RIL_UNSOL_CELL_INFO_LIST: {
@@ -3422,6 +3806,24 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 }
                 break;
             }
+
+
+            case RIL_UNSOL_NEIGHBORING_CELL_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mNeighboringInfoRegistrants != null) {
+                    mNeighboringInfoRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_NETWORK_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mNetworkInfoRegistrants != null) {
+                    mNetworkInfoRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
             case RIL_UNSOL_HARDWARE_CONFIG_CHANGED:
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
@@ -3430,33 +3832,523 @@ public class RIL extends BaseCommands implements CommandsInterface {
                                              new AsyncResult (null, ret, null));
                 }
                 break;
-            case RIL_UNSOL_ON_SS:
-                if (RILJ_LOGD) unsljLogRet(response, ret);
 
-                if (mSsRegistrant != null) {
-                    mSsRegistrant.notifyRegistrant(
-                                        new AsyncResult (null, ret, null));
+            case RIL_UNSOL_SET_PHONE_RAT_FAMILY_COMPLETE:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                riljLog("mPhoneRatFamilyreg size :" + mPhoneRatFamilyChangedRegistrants.size());
+                if (mPhoneRatFamilyChangedRegistrants != null) {
+                    mPhoneRatFamilyChangedRegistrants.notifyRegistrants(
+                            new AsyncResult(null, ret, null));
                 }
                 break;
-            case RIL_UNSOL_STK_CC_ALPHA_NOTIFY:
-                if (RILJ_LOGD) unsljLogRet(response, ret);
 
-                if (mCatCcAlphaRegistrant != null) {
-                    mCatCcAlphaRegistrant.notifyRegistrant(
-                                        new AsyncResult (null, ret, null));
+            /* M: call control part start */
+            case RIL_UNSOL_CALL_FORWARDING:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                /* M: SS part */
+                if (mCallForwardingInfoRegistrants != null) {
+                    boolean bCfuEnabled = (((int[]) ret)[0] == 1);
+                    boolean bIsLine1 = (((int[]) ret)[1] == 1);
+                    /* ONLY notify for Line1 */
+                    if (bIsLine1) {
+                        mCfuReturnValue = ret;
+                        mCallForwardingInfoRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                    }
+                 /* M: SS part end */
                 }
                 break;
-            // Samsung STK
-            case RIL_UNSOL_STK_SEND_SMS_RESULT:
-                if (Resources.getSystem().
-                        getBoolean(com.android.internal.R.bool.config_samsung_stk)) {
-                    if (RILJ_LOGD) unsljLogRet(response, ret);
 
-                    if (mCatSendSmsResultRegistrant != null) {
-                        mCatSendSmsResultRegistrant.notifyRegistrant(
-                                new AsyncResult (null, ret, null));
+            case RIL_UNSOL_CRSS_NOTIFICATION:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mCallRelatedSuppSvcRegistrant != null) {
+                    mCallRelatedSuppSvcRegistrant.notifyRegistrant(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_INCOMING_CALL_INDICATION:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mIncomingCallIndicationRegistrant != null) {
+                    mIncomingCallIndicationRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_CIPHER_INDICATION:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+
+                int simCipherStatus = Integer.parseInt(((String[]) ret)[0]);
+                int sessionStatus = Integer.parseInt(((String[]) ret)[1]);
+                int csStatus = Integer.parseInt(((String[]) ret)[2]);
+                int psStatus = Integer.parseInt(((String[]) ret)[3]);
+
+                riljLog("RIL_UNSOL_CIPHER_INDICATION :" + simCipherStatus + " " + sessionStatus + " " + csStatus + " " + psStatus);
+
+                int[] cipherResult = new int[3];
+
+                cipherResult[0] = simCipherStatus;
+                cipherResult[1] = csStatus;
+                cipherResult[2] = psStatus;
+
+                if (mCipherIndicationRegistrant != null) {
+                    mCipherIndicationRegistrant.notifyRegistrants(
+                        new AsyncResult(null, cipherResult, null));
+                }
+
+                break;
+
+            case RIL_UNSOL_CNAP:
+                    String[] respCnap = (String[]) ret;
+                    int validity = Integer.parseInt(((String[]) ret)[1]);
+
+                    riljLog("RIL_UNSOL_CNAP :" + respCnap[0] + " " + respCnap[1]);
+                    if (validity == 0) {
+                        if (mCnapNotifyRegistrant != null) {
+                            mCnapNotifyRegistrant.notifyRegistrant(
+                                            new AsyncResult(null, respCnap, null));
+                        }
+                    }
+
+                break;
+
+            case RIL_UNSOL_SPEECH_CODEC_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+
+                if (mSpeechCodecInfoRegistrant != null) {
+                    mSpeechCodecInfoRegistrant.notifyRegistrant(
+                        new AsyncResult(null, ret, null));
+                }
+            break;
+            /* M: call control part end */
+
+            case RIL_UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED:
+                if (RILJ_LOGD) unsljLog(response);
+
+                    mPsNetworkStateRegistrants
+                        .notifyRegistrants(new AsyncResult(null, null, null));
+            break;
+
+            /* M: network part start */
+            case RIL_UNSOL_IMEI_LOCK:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mImeiLockRegistrant != null) {
+                    mImeiLockRegistrant.notifyRegistrants(new AsyncResult(null, null, null));
+                }
+                break;
+
+            //ALPS00248788 START
+            case RIL_UNSOL_INVALID_SIM:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mInvalidSimInfoRegistrant != null) {
+                   mInvalidSimInfoRegistrant.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            //ALPS00248788 END
+            //MTK-START [MTK80515] [ALPS00368272]
+            case RIL_UNSOL_RESPONSE_MMRR_STATUS_CHANGED:
+                if (RILJ_LOGD) unsljLog(response);
+                if (ret != null) {
+                    int[] emmrrs = (int[]) ret;
+                    int ps_status = Integer.valueOf(emmrrs[0]);
+
+					/*
+                    if (!SystemProperties.get("ro.mtk_bsp_package").equals("1")) {
+                        try {
+                            if (mServiceStateExt.isBroadcastEmmrrsPsResume(ps_status)) {
+                                riljLog("Broadcast for EMMRRS: android.intent.action.EMMRRS_PS_RESUME ");
+                            }
+                        } catch (RuntimeException e) {
+                            e.printStackTrace();
+                        }
+                    }
+					*/
+                }
+                break;
+            //MTK-END [MTK80515] [ALPS00368272]
+
+            case RIL_UNSOL_FEMTOCELL_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                mFemtoCellInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                break;
+
+            // ALPS00297719 START
+            case RIL_UNSOL_RESPONSE_ACMT:
+                if (RILJ_LOGD) unsljLog(response);
+                if (ret != null) {
+                    int[] acmt = (int[]) ret;
+                    if (acmt.length == 2) {
+                        int error_type = Integer.valueOf(acmt[0]);
+                        int error_cause = acmt[1];
+
+
+						/*
+                        if (!SystemProperties.get("ro.mtk_bsp_package").equals("1")) {
+                            try {
+                                if (mServiceStateExt.needBrodcastAcmt(error_type, error_cause)
+                                        == true) {
+                                    Intent intent = new Intent(
+                                            TelephonyIntents.ACTION_ACMT_NETWORK_SERVICE_STATUS_INDICATOR);
+                                    intent.putExtra("CauseCode", acmt[1]);
+                                    intent.putExtra("CauseType", acmt[0]);
+                                    mContext.sendBroadcast(intent);
+                                    riljLog("Broadcast for ACMT: com.VendorName.CauseCode "
+                                            + acmt[1] + "," + acmt[0]);
+                                }
+                            } catch (RuntimeException e) {
+                                e.printStackTrace();
+                            }
+                        }
+						*/
                     }
                 }
+                break;
+            // ALPS00297719 END
+            /* M: network part end */
+            case RIL_UNSOL_STK_EVDL_CALL:
+                if (false == SystemProperties.get("ro.mtk_bsp_package").equals("1")) {
+                    if (RILJ_LOGD) unsljLogvRet(response, ret);
+                    if (mStkEvdlCallRegistrant != null) {
+                        mStkEvdlCallRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                    }
+                }
+                break;
+
+            case RIL_UNSOL_STK_CALL_CTRL:
+                if (RILJ_LOGD) {
+                    unsljLogvRet(response, ret);
+                }
+                if (mStkCallCtrlRegistrant != null) {
+                    mStkCallCtrlRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_STK_SETUP_MENU_RESET:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mStkSetupMenuResetRegistrant != null) {
+                    mStkSetupMenuResetRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            //MTK-START multiple application support
+            case RIL_UNSOL_APPLICATION_SESSION_ID_CHANGED: {
+                if (RILJ_LOGD) unsljLog(response);
+                if (mSessionChangedRegistrants != null) {
+                    mSessionChangedRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            }
+            //MTK-END multiple application support
+            case RIL_UNSOL_SIM_MISSING:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimMissing != null) {
+                    mSimMissing.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_SIM_RECOVERY:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimRecovery != null) {
+                    mSimRecovery.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_VIRTUAL_SIM_ON:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mVirtualSimOn != null) {
+                    mVirtualSimOn.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_VIRTUAL_SIM_OFF:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mVirtualSimOff != null) {
+                    mVirtualSimOff.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_SIM_PLUG_OUT:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimPlugOutRegistrants != null) {
+                    mSimPlugOutRegistrants.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                mCfuReturnValue = null;
+                break;
+            case RIL_UNSOL_SIM_PLUG_IN:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimPlugInRegistrants != null) {
+                    mSimPlugInRegistrants.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_SIM_COMMON_SLOT_NO_CHANGED:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mCommonSlotNoChangedRegistrants != null) {
+                    mCommonSlotNoChangedRegistrants.notifyRegistrants(new AsyncResult(null, null, null));
+                }
+                break;
+            case RIL_UNSOL_DATA_ALLOWED:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mDataAllowedRegistrants != null) {
+                    mDataAllowedRegistrants.notifyRegistrants(new AsyncResult(null, null, null));
+                }
+                break;
+
+            case RIL_UNSOL_PHB_READY_NOTIFICATION:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mPhbReadyRegistrants != null) {
+                    mPhbReadyRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_IMS_REGISTRATION_INFO:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mImsRegistrationInfoRegistrants != null) {
+                    mImsRegistrationInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_RESPONSE_PLMN_CHANGED:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mPlmnChangeNotificationRegistrant != null) {
+                    mPlmnChangeNotificationRegistrant.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_RESPONSE_REGISTRATION_SUSPENDED:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mRegistrationSuspendedRegistrant != null) {
+                    mRegistrationSuspendedRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                break;
+            //Remote SIM ME lock related APIs [Start]
+            case RIL_UNSOL_MELOCK_NOTIFICATION:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mMelockRegistrants != null) {
+                    mMelockRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            //Remote SIM ME lock related APIs [End]
+            case RIL_UNSOL_IMS_ENABLE_DONE:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mImsEnableRegistrants != null) {
+                    mImsEnableRegistrants.notifyRegistrants();
+                }
+                break;
+            case RIL_UNSOL_IMS_DISABLE_DONE:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mImsDisableRegistrants != null) {
+                    mImsDisableRegistrants.notifyRegistrants();
+                }
+                break;
+            // M: Fast Dormancy
+            case RIL_UNSOL_SCRI_RESULT:
+                Integer scriResult = (((int[]) ret)[0]);
+                riljLog("s:" + scriResult + ":" + (((int[]) ret)[0]));
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mScriResultRegistrant != null) {
+                   mScriResultRegistrant.notifyRegistrant(new AsyncResult(null, scriResult, null));
+                }
+                break;
+            case RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_SUPPORT:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mEpsNetworkFeatureSupportRegistrants != null) {
+                    mEpsNetworkFeatureSupportRegistrants.notifyRegistrants(
+                                        new AsyncResult (null, ret, null));
+                }
+                break;
+
+            /// M: IMS feature. @{
+            //For updating call ids for conference call after SRVCC is done.
+            case RIL_UNSOL_ECONF_SRVCC_INDICATION:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mEconfSrvccRegistrants != null) {
+                    mEconfSrvccRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            //For updating conference call merged/added result.
+            case RIL_UNSOL_ECONF_RESULT_INDICATION:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mEconfResultRegistrants != null) {
+                	 riljLog("Notify ECONF result");
+                	 String[] econfResult = (String[])ret;
+                	 riljLog("ECONF result = " + econfResult[3]);
+                	 mEconfResultRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            //For updating call mode and pau information.
+            case RIL_UNSOL_CALL_INFO_INDICATION :
+                if (RILJ_LOGD) unsljLog(response);
+                if (mCallInfoRegistrants != null) {
+                   mCallInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            /// @}
+
+            case RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_INFO:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mEpsNetworkFeatureInfoRegistrants != null) {
+                   mEpsNetworkFeatureInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_SRVCC_HANDOVER_INFO_INDICATION:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mSrvccHandoverInfoIndicationRegistrants != null) {
+                    mSrvccHandoverInfoIndicationRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            // IMS
+            //VoLTE
+            case RIL_UNSOL_DEDICATE_BEARER_ACTIVATED:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if(mDedicateBearerActivatedRegistrant != null) {
+                    mDedicateBearerActivatedRegistrant.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_DEDICATE_BEARER_MODIFIED:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if(mDedicateBearerModifiedRegistrant != null) {
+                    mDedicateBearerModifiedRegistrant.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_DEDICATE_BEARER_DEACTIVATED:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if(mDedicateBearerDeactivatedRegistrant != null) {
+                    mDedicateBearerDeactivatedRegistrant.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            //MTK-START for MD state change
+            case RIL_UNSOL_MD_STATE_CHANGE:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                break;
+            //MTK-END for MD state change
+                
+            case RIL_UNSOL_MO_DATA_BARRING_INFO:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mMoDataBarringInfoRegistrants != null) {
+                    mMoDataBarringInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_SSAC_BARRING_INFO:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mSsacBarringInfoRegistrants != null) {
+                    mSsacBarringInfoRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+                
+            // M: CC33 LTE.
+            case RIL_UNSOL_RAC_UPDATE:
+                if (RILJ_LOGD) unsljLog(response);
+                mRacUpdateRegistrants
+                    .notifyRegistrants(new AsyncResult(null, null, null));
+                break;
+            case RIL_UNSOL_REMOVE_RESTRICT_EUTRAN:
+                if (RILJ_LOGD) unsljLog(response);
+                mRemoveRestrictEutranRegistrants
+                    .notifyRegistrants(new AsyncResult(null, null, null));
+                break;
+
+//MTK_TC1_FEATURE for LGE CSMCC_MO_CALL_MODIFIED { 
+	           case RIL_UNSOL_RESPONSE_MO_CALL_STATE_CHANGED:                
+if (SystemProperties.get("ro.mtk_tc1_feature").equals("1")) {   
+                
+                if (RILJ_LOGD) unsljLogRet(response,ret);
+                mMoCallStateRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+}
+        	    break;            
+//}             
+            /* M: C2K part start */
+            case RIL_UNSOL_CDMA_CALL_ACCEPTED:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+
+                if (mAcceptedRegistrant != null) {
+                    mAcceptedRegistrant.notifyRegistrants(
+                            new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_UTK_SESSION_END:
+                if (RILJ_LOGD) {
+                    unsljLog(response);
+                }
+
+                if (mUtkSessionEndRegistrant != null) {
+                    mUtkSessionEndRegistrant.notifyRegistrant(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_UTK_PROACTIVE_COMMAND:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+
+                if (mUtkProCmdRegistrant != null) {
+                    mUtkProCmdRegistrant.notifyRegistrant(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_UTK_EVENT_NOTIFY:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                if (mUtkEventRegistrant != null) {
+                    mUtkEventRegistrant.notifyRegistrant(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_VIA_GPS_EVENT:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                if (mViaGpsEvent != null) {
+                    mViaGpsEvent.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_VIA_NETWORK_TYPE_CHANGE:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                if (mNetworkTypeChangedRegistrant != null) {
+                    mNetworkTypeChangedRegistrant.notifyRegistrants(
+                            new AsyncResult(null, ret, null));
+                }
+                break;
+            case RIL_UNSOL_VIA_PLMN_CHANGE_REG_PAUSE:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                String mccmnc = "";
+                if (ret != null && ret instanceof String[]) {
+                    String s[] = (String[]) ret;
+                    if (s.length >= 2) {
+                        mccmnc = s[0] + s[1];
+                    }
+                }
+                riljLog("mccmnc changed mccmnc=" + mccmnc);
+                mMccMncChangeRegistrants.notifyRegistrants(new AsyncResult(null, mccmnc, null));
+                break;
+            case RIL_UNSOL_VIA_INVALID_SIM_DETECTED:
+                if (RILJ_LOGD) {
+                    unsljLogRet(response, ret);
+                }
+                if (mInvalidSimDetectedRegistrant != null) {
+                    mInvalidSimDetectedRegistrant.notifyRegistrants(
+                            new AsyncResult(null, ret, null));
+                }
+                break;
+            /* M: C2K part end*/
+            default:
                 break;
         }
     }
@@ -3466,7 +4358,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
      *
      * @param rilVer is the version of the ril or -1 if disconnected.
      */
-    protected void notifyRegistrantsRilConnectionChanged(int rilVer) {
+    private void notifyRegistrantsRilConnectionChanged(int rilVer) {
         mRilVersion = rilVer;
         if (mRilConnectedRegistrants != null) {
             mRilConnectedRegistrants.notifyRegistrants(
@@ -3474,125 +4366,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
     }
 
-    private boolean isQcUnsolOemHookResp(ByteBuffer oemHookResponse) {
-
-        /* Check OEM ID in UnsolOemHook response */
-        if (oemHookResponse.capacity() < mHeaderSize) {
-            /*
-             * size of UnsolOemHook message is less than expected, considered as
-             * External OEM's message
-             */
-            Rlog.d(RILJ_LOG_TAG,
-                    "RIL_UNSOL_OEM_HOOK_RAW data size is " + oemHookResponse.capacity());
-            return false;
-        } else {
-            byte[] oemIdBytes = new byte[OEM_IDENTIFIER.length()];
-            oemHookResponse.get(oemIdBytes);
-            String oemIdString = new String(oemIdBytes);
-            Rlog.d(RILJ_LOG_TAG, "Oem ID in RIL_UNSOL_OEM_HOOK_RAW is " + oemIdString);
-            if (!oemIdString.equals(OEM_IDENTIFIER)) {
-                /* OEM ID not matched, considered as External OEM's message */
-                return false;
-            }
-        }
-        return true;
-    }
-
-    final public class UnsolOemHookBuffer {
-        private int mRilInstance;
-        private byte[] mData;
-
-        public UnsolOemHookBuffer(int rilInstance, byte[] data) {
-            mRilInstance = rilInstance;
-            mData = data;
-        }
-
-        public int getRilInstance() {
-            return mRilInstance;
-        }
-
-        public byte[] getUnsolOemHookBuffer() {
-            return mData;
-        }
-    }
-
-    private void processUnsolOemhookResponse(ByteBuffer oemHookResponse) {
-        int responseId = 0, responseSize = 0, responseVoiceId = 0;
-
-        responseId = oemHookResponse.getInt();
-        Rlog.d(RILJ_LOG_TAG, "Response ID in RIL_UNSOL_OEM_HOOK_RAW is " + responseId);
-
-        responseSize = oemHookResponse.getInt();
-        if (responseSize < 0) {
-            Rlog.e(RILJ_LOG_TAG, "Response Size is Invalid " + responseSize);
-            return;
-        }
-
-        byte[] responseData = new byte[responseSize];
-        if (oemHookResponse.remaining() == responseSize) {
-            oemHookResponse.get(responseData, 0, responseSize);
-        } else {
-            Rlog.e(RILJ_LOG_TAG, "Response Size(" + responseSize
-                    + ") doesnot match remaining bytes(" +
-                    oemHookResponse.remaining() + ") in the buffer. So, don't process further");
-            return;
-        }
-
-        switch (responseId) {
-            case OEMHOOK_UNSOL_WWAN_IWLAN_COEXIST:
-                notifyWwanIwlanCoexist(responseData);
-                break;
-
-            case OEMHOOK_UNSOL_SIM_REFRESH:
-                notifySimRefresh(responseData);
-                break;
-
-            case QCRIL_EVT_HOOK_UNSOL_MODEM_CAPABILITY:
-                Rlog.d(RILJ_LOG_TAG, "QCRIL_EVT_HOOK_UNSOL_MODEM_CAPABILITY = mInstanceId"
-                        + mInstanceId);
-                notifyModemCap(responseData, mInstanceId);
-                break;
-
-            default:
-                Rlog.d(RILJ_LOG_TAG, "Response ID " + responseId
-                        + " is not served in this process.");
-                break;
-        }
-    }
-
-    /** Notify registrants of WWAN coexistence event. */
-    protected void notifyWwanIwlanCoexist(byte[] data) {
-        AsyncResult ar = new AsyncResult(null, data, null);
-        mWwanIwlanCoexistenceRegistrants.notifyRegistrants(ar);
-        Rlog.d(RILJ_LOG_TAG, "WWAN, IWLAN coexistence notified to registrants");
-    }
-
-    /** Notify registrants of SIM_REFRESH event. */
-    protected void notifySimRefresh(byte[] data) {
-        int len = data.length;
-        byte[] userdata = new byte[1 + len];
-        System.arraycopy(data, 0, userdata, 0, len);
-        //Add slot id in SIM_REFRESH event to notify framework: IccRecords.
-        userdata[len] = (mInstanceId == null) ? 0 : (byte)(mInstanceId & 0xFF);
-
-        AsyncResult ar = new AsyncResult(null, userdata, null);
-        mSimRefreshRegistrants.notifyRegistrants(ar);
-        Rlog.d(RILJ_LOG_TAG, "SIM_REFRESH notified to registrants");
-    }
-
-    /** Notify registrants of MODEM_CAPABILITY event. */
-    protected void notifyModemCap(byte[] data, Integer phoneId) {
-        UnsolOemHookBuffer buffer = new UnsolOemHookBuffer(phoneId, data);
-
-        //Had notifyRegistrants not discarded userObj, we could have easily
-        //passed the subId as ar.userObj.
-        AsyncResult ar = new AsyncResult(null, buffer, null);
-
-        mModemCapRegistrants.notifyRegistrants(ar);
-        Rlog.d(RILJ_LOG_TAG, "MODEM_CAPABILITY on phone=" + phoneId + " notified to registrants");
-    }
-
-    protected Object
+    private Object
     responseInts(Parcel p) {
         int numInts;
         int response[];
@@ -3609,12 +4383,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
 
-    protected Object
+    private Object
     responseVoid(Parcel p) {
         return null;
     }
 
-    protected Object
+    private Object
     responseCallForward(Parcel p) {
         int numInfos;
         CallForwardInfo infos[];
@@ -3637,7 +4411,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return infos;
     }
 
-    protected Object
+    private Object
     responseSuppServiceNotification(Parcel p) {
         SuppServiceNotification notification = new SuppServiceNotification();
 
@@ -3650,7 +4424,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return notification;
     }
 
-    protected Object
+    private Object
     responseCdmaSms(Parcel p) {
         SmsMessage sms;
         sms = SmsMessage.newFromParcel(p);
@@ -3658,7 +4432,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return sms;
     }
 
-    protected Object
+    private Object
     responseString(Parcel p) {
         String response;
 
@@ -3667,7 +4441,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseStrings(Parcel p) {
         int num;
         String response[];
@@ -3677,7 +4451,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseRaw(Parcel p) {
         int num;
         byte response[];
@@ -3687,7 +4461,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseSMS(Parcel p) {
         int messageRef, errorCode;
         String ackPDU;
@@ -3702,7 +4476,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
 
-    protected Object
+    private Object
     responseICC_IO(Parcel p) {
         int sw1, sw2;
         Message ret;
@@ -3720,7 +4494,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return new IccIoResult(sw1, sw2, s);
     }
 
-    protected Object
+    private Object
     responseICC_IOBase64(Parcel p) {
         int sw1, sw2;
         Message ret;
@@ -3739,31 +4513,16 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return new IccIoResult(sw1, sw2, android.util.Base64.decode(s, android.util.Base64.DEFAULT));
     }
 
-    @Override
-    public boolean needsOldRilFeature(String feature) {
-        String[] features = SystemProperties.get("ro.telephony.ril.config", "").split(",");
-        for (String found: features) {
-            if (found.equals(feature))
-                return true;
-        }
-        return false;
-    }
-
-    protected Object
+    private Object
     responseIccCardStatus(Parcel p) {
         IccCardApplicationStatus appStatus;
-
-        boolean oldRil = needsOldRilFeature("icccardstatus");
 
         IccCardStatus cardStatus = new IccCardStatus();
         cardStatus.setCardState(p.readInt());
         cardStatus.setUniversalPinState(p.readInt());
         cardStatus.mGsmUmtsSubscriptionAppIndex = p.readInt();
         cardStatus.mCdmaSubscriptionAppIndex = p.readInt();
-
-        if (!oldRil)
-            cardStatus.mImsSubscriptionAppIndex = p.readInt();
-
+        cardStatus.mImsSubscriptionAppIndex = p.readInt();
         int numApplications = p.readInt();
 
         // limit to maximum allowed applications
@@ -3771,7 +4530,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             numApplications = IccCardStatus.CARD_MAX_APPS;
         }
         cardStatus.mApplications = new IccCardApplicationStatus[numApplications];
-
         for (int i = 0 ; i < numApplications ; i++) {
             appStatus = new IccCardApplicationStatus();
             appStatus.app_type       = appStatus.AppTypeFromRILInt(p.readInt());
@@ -3787,7 +4545,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return cardStatus;
     }
 
-    protected Object
+    private Object
     responseSimRefresh(Parcel p) {
         IccRefreshResponse response = new IccRefreshResponse();
 
@@ -3797,7 +4555,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseCallList(Parcel p) {
         int num;
         int voiceSettings;
@@ -3875,7 +4633,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected DataCallResponse getDataCallResponse(Parcel p, int version) {
+    private DataCallResponse getDataCallResponse(Parcel p, int version) {
         DataCallResponse dataCall = new DataCallResponse();
 
         dataCall.version = version;
@@ -3883,21 +4641,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
             dataCall.cid = p.readInt();
             dataCall.active = p.readInt();
             dataCall.type = p.readString();
-            if (version < 4 || needsOldRilFeature("datacallapn")) {
-                p.readString(); // APN - not used
-            }
             String addresses = p.readString();
             if (!TextUtils.isEmpty(addresses)) {
                 dataCall.addresses = addresses.split(" ");
             }
-            // DataCallState needs an ifname. Since we don't have one use the name from the ThrottleService resource (default=rmnet0).
-            dataCall.ifname = Resources.getSystem().getString(com.android.internal.R.string.config_datause_iface);
         } else {
             dataCall.status = p.readInt();
-            if (needsOldRilFeature("usehcradio"))
-                dataCall.suggestedRetryTime = -1;
-            else
-	      dataCall.suggestedRetryTime = p.readInt();
+            dataCall.suggestedRetryTime = p.readInt();
             dataCall.cid = p.readInt();
             dataCall.active = p.readInt();
             dataCall.type = p.readString();
@@ -3918,24 +4668,46 @@ public class RIL extends BaseCommands implements CommandsInterface {
             if (!TextUtils.isEmpty(gateways)) {
                 dataCall.gateways = gateways.split(" ");
             }
-            if (version >= 10) {
+
+
+            //VoLTE
+            //For dedicate bearer support, add the magic number 1000
+            if (version > 1000) {
                 String pcscf = p.readString();
                 if (!TextUtils.isEmpty(pcscf)) {
                     dataCall.pcscf = pcscf.split(" ");
                 }
-                if (version >= 11) {
-                    dataCall.mtu = p.readInt();
-                }
+
+                //read dedicate bearer information (if any)
+                Object response = responseSetupDedicateDataCall(p);
+                if (response != null) {
+                    if (response instanceof DedicateDataCallState) {
+                        dataCall.concatenateDataCallState.add((DedicateDataCallState)response);
+                    } else {
+                        DedicateDataCallState[] concatenateDataCallState = (DedicateDataCallState[])response;
+                        for (int i=0,length=concatenateDataCallState.length; i<length; i++)
+                            dataCall.concatenateDataCallState.add(concatenateDataCallState[i]);
+                    }
+            }
+
+                //read default bearer information
+                DedicateDataCallState dedicateDataCall = new DedicateDataCallState();
+                dedicateDataCall = (DedicateDataCallState) responseSetupDedicateDataCall(p);
+                dataCall.defaultBearerDataCallState = dedicateDataCall;
+
+                riljLog("[DefaultBearer: " + dedicateDataCall.interfaceId + ", " + dedicateDataCall.defaultCid + ", " + dedicateDataCall.cid + ", " + dedicateDataCall.active +
+                ", " + dedicateDataCall.signalingFlag + ", " + dedicateDataCall.failCause + ", Qos" + dedicateDataCall.qosStatus + ", Tft" + dedicateDataCall.tftStatus +
+                ", PCSCF" + dedicateDataCall.pcscfInfo);
             }
         }
         return dataCall;
     }
 
-    protected Object
+    private Object
     responseDataCallList(Parcel p) {
         ArrayList<DataCallResponse> response;
-        boolean oldRil = needsOldRilFeature("datacall");
-        int ver = (oldRil ? 3 : p.readInt());
+
+        int ver = p.readInt();
         int num = p.readInt();
         riljLog("responseDataCallList ver=" + ver + " num=" + num);
 
@@ -3947,10 +4719,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseSetupDataCall(Parcel p) {
-        boolean oldRil = needsOldRilFeature("datacall");
-        int ver = (oldRil ? 3 : p.readInt());
+        int ver = p.readInt();
         int num = p.readInt();
         if (RILJ_LOGV) riljLog("responseSetupDataCall ver=" + ver + " num=" + num);
 
@@ -3990,10 +4761,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     dataCall.pcscf = pcscf.split(" ");
                 }
             }
-            if (num >= 7) {
-                dataCall.mtu = Integer.parseInt(p.readString());
-                if (RILJ_LOGD) riljLog("responseSetupDataCall got mtu=" + dataCall.mtu);
-            }
         } else {
             if (num != 1) {
                 throw new RuntimeException(
@@ -4006,32 +4773,34 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return dataCall;
     }
 
-    protected Object
+    // VoLTE
+    private Object
+    responseDeactivateDataCall(Parcel p) {
+        int [] cidArray = null;
+        if (p.dataSize() > 0 ) {    //checking Parcel data value
+            cidArray = (int []) responseInts(p);
+        }
+
+        return cidArray;
+    }
+
+    private Object
     responseOperatorInfos(Parcel p) {
         String strings[] = (String [])responseStrings(p);
         ArrayList<OperatorInfo> ret;
 
-        // FIXME: What is this really doing
-        SpnOverride spnOverride = new SpnOverride();
-
-        if (strings.length % mQANElements != 0) {
+        if (strings.length % 4 != 0) {
             throw new RuntimeException(
                 "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
-                + strings.length + " strings, expected multiple of " + mQANElements);
+                + strings.length + " strings, expected multible of 4");
         }
 
-        ret = new ArrayList<OperatorInfo>(strings.length / mQANElements);
+        ret = new ArrayList<OperatorInfo>(strings.length / 4);
 
-        for (int i = 0 ; i < strings.length ; i += mQANElements) {
-            String strOperatorLong = null;
-            if (spnOverride.containsCarrier(strings[i+2])) {
-                strOperatorLong = spnOverride.getSpn(strings[i+2]);
-            } else {
-                strOperatorLong = strings[i+0];
-            }
+        for (int i = 0 ; i < strings.length ; i += 4) {
             ret.add (
                 new OperatorInfo(
-                    strOperatorLong,
+                    strings[i+0],
                     strings[i+1],
                     strings[i+2],
                     strings[i+3]));
@@ -4040,7 +4809,102 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return ret;
     }
 
-    protected Object
+    private Object
+    responseOperatorInfosWithAct(Parcel p) {
+        String strings[] = (String []) responseStrings(p);
+        ArrayList<OperatorInfo> ret;
+
+        if (strings.length % 5 != 0) {
+            throw new RuntimeException(
+                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT: invalid response. Got "
+                + strings.length + " strings, expected multible of 5");
+        }
+
+        String lacStr = SystemProperties.get("gsm.cops.lac");
+        boolean lacValid = false;
+        int lacIndex = 0;
+
+        Rlog.d(RILJ_LOG_TAG, "lacStr = " + lacStr + " lacStr.length=" + lacStr.length() + " strings.length=" + strings.length);
+        if ((lacStr.length() > 0) && (lacStr.length() % 4 == 0) && ((lacStr.length() / 4) == (strings.length / 5))) {
+            Rlog.d(RILJ_LOG_TAG, "lacValid set to true");
+            lacValid = true;
+        }
+
+        SystemProperties.set("gsm.cops.lac", ""); //reset property
+
+        ret = new ArrayList<OperatorInfo>(strings.length / 5);
+
+        for (int i = 0 ; i < strings.length ; i += 5) {
+            /* Default display manufacturer maintained operator name table */
+            if (strings[i + 2] != null) {
+                strings[i + 0] = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 2], true, mContext);
+                strings[i + 1] = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 2], false, mContext);
+                riljLog("lookup RIL responseOperator(), longAlpha= " + strings[i + 0] + ",shortAlpha= " + strings[i + 1] + ",numeric=" + strings[i + 2]);
+            }
+
+            String longName = null;
+            String shortName = null;
+            /* Operator name from network MM information has higher priority to display */
+            longName = lookupOperatorNameFromNetwork(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 2], true);
+            shortName = lookupOperatorNameFromNetwork(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 2], false);
+            if (longName != null) {
+                strings[i + 0] = longName;
+            }
+            if (shortName != null) {
+                strings[i + 1] = shortName;
+            }
+            riljLog("lookupOperatorNameFromNetwork in responseOperatorInfosWithAct(),updated longAlpha= " + strings[i + 0] + ",shortAlpha= " + strings[i + 1] + ",numeric=" + strings[i + 2]);
+
+            /* Operator name from SIM (EONS/CPHS) has highest priority to display. This will be handled in GsmSST updateSpnDisplay() */
+            /* ALPS00353868: To get operator name from OPL/PNN/CPHS, which need lac info */
+            if ((lacValid == true) && (strings[i + 0] != null)) {
+                UiccController uiccController = UiccController.getInstance();
+                SIMRecords simRecord = (SIMRecords) uiccController.getIccRecords(mInstanceId, UiccController.APP_FAM_3GPP);
+                int lacValue = -1;
+                String sEons = null;
+                String lac = lacStr.substring(lacIndex, lacIndex + 4);
+                Rlog.d(RILJ_LOG_TAG, "lacIndex=" + lacIndex + " lacValue=" + lacValue + " lac=" + lac + " plmn numeric=" + strings[i + 2] + " plmn name" + strings[i + 0]);
+
+                if (lac != "") {
+                    lacValue = Integer.parseInt(lac, 16);
+                    lacIndex += 4;
+                    if (lacValue != 0xfffe) {
+                        sEons = simRecord.getEonsIfExist(strings[i + 2], lacValue, true);
+                        if (sEons != null) {
+                            strings[i + 0] = sEons;
+                            Rlog.d(RILJ_LOG_TAG, "plmn name update to Eons: " + strings[i + 0]);
+                        } else {
+                            String sCphsOns = null;
+                            sCphsOns = simRecord.getSIMCPHSOns();
+                            Rlog.d(RILJ_LOG_TAG, "plmn name NOT update to Eons");
+
+                            if (sCphsOns != null) {
+                                strings[i + 0] = sCphsOns;
+                                Rlog.d(RILJ_LOG_TAG, "plmn name update to CPHS Ons: " + strings[i + 0]);
+                            }
+                        }
+                    } else {
+                        Rlog.d(RILJ_LOG_TAG, "invalid lac ignored");
+                    }
+                }
+            }
+            // ALPS00353868 END
+
+            /* ALPS01597054 Always show Act info(ex: "2G","3G","4G") for PLMN list result */
+            strings[i + 0] = strings[i + 0].concat(" " + strings[i + 4]);
+            strings[i + 1] = strings[i + 1].concat(" " + strings[i + 4]);
+
+            ret.add(
+                new OperatorInfo(
+                    strings[i + 0],
+                    strings[i + 1],
+                    strings[i + 2],
+                    strings[i + 3]));
+        }
+        return ret;
+    }
+
+    private Object
     responseCellList(Parcel p) {
        int num, rssi;
        String location;
@@ -4050,25 +4914,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
        num = p.readInt();
        response = new ArrayList<NeighboringCellInfo>();
 
-       // Determine the radio access type
-       String radioString = SystemProperties.get(
-               TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE, "unknown");
-       int radioType;
-       if (radioString.equals("GPRS")) {
-           radioType = NETWORK_TYPE_GPRS;
-       } else if (radioString.equals("EDGE")) {
-           radioType = NETWORK_TYPE_EDGE;
-       } else if (radioString.equals("UMTS")) {
-           radioType = NETWORK_TYPE_UMTS;
-       } else if (radioString.equals("HSDPA")) {
-           radioType = NETWORK_TYPE_HSDPA;
-       } else if (radioString.equals("HSUPA")) {
-           radioType = NETWORK_TYPE_HSUPA;
-       } else if (radioString.equals("HSPA")) {
-           radioType = NETWORK_TYPE_HSPA;
-       } else {
-           radioType = NETWORK_TYPE_UNKNOWN;
-       }
+       // ALPS00269882 START
+       // Get the radio access type
+       int radioType = SystemProperties.getInt("gsm.enbr.rat", NETWORK_TYPE_GPRS);
+       riljLog("gsm.enbr.rat=" + radioType);
+       // ALPS00269882 END
 
        // Interpret the location based on radio access type
        if (radioType != NETWORK_TYPE_UNKNOWN) {
@@ -4082,19 +4932,19 @@ public class RIL extends BaseCommands implements CommandsInterface {
        return response;
     }
 
-    protected Object responseGetPreferredNetworkType(Parcel p) {
+    private Object responseGetPreferredNetworkType(Parcel p) {
        int [] response = (int[]) responseInts(p);
 
        if (response.length >= 1) {
            // Since this is the response for getPreferredNetworkType
            // we'll assume that it should be the value we want the
            // vendor ril to take if we reestablish a connection to it.
-           mPreferredNetworkType = response[0];
+           //mPreferredNetworkType = response[0];
        }
        return response;
     }
 
-    protected Object responseGmsBroadcastConfig(Parcel p) {
+    private Object responseGmsBroadcastConfig(Parcel p) {
         int num;
         ArrayList<SmsBroadcastConfigInfo> response;
         SmsBroadcastConfigInfo info;
@@ -4116,7 +4966,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseCdmaBroadcastConfig(Parcel p) {
         int numServiceCategories;
         int response[];
@@ -4155,7 +5005,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseSignalStrength(Parcel p) {
         // Assume this is gsm, but doesn't matter as ServiceStateTracker
         // sets the proper value.
@@ -4163,7 +5013,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return signalStrength;
     }
 
-    protected ArrayList<CdmaInformationRecords>
+    private ArrayList<CdmaInformationRecords>
     responseCdmaInformationRecord(Parcel p) {
         int numberOfInfoRecs;
         ArrayList<CdmaInformationRecords> response;
@@ -4183,7 +5033,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected Object
+    private Object
     responseCdmaCallWaiting(Parcel p) {
         CdmaCallWaitingNotification notification = new CdmaCallWaitingNotification();
 
@@ -4202,7 +5052,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return notification;
     }
 
-    protected Object
+    private Object
     responseCallRing(Parcel p){
         char response[] = new char[4];
 
@@ -4214,29 +5064,85 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-    protected ArrayList<ApnSetting> responseGetDataCallProfile(Parcel p) {
-        int nProfiles = p.readInt();
-        if (RILJ_LOGD) riljLog("# data call profiles:" + nProfiles);
+    //MTK-START Femtocell (CSG)
+    private Object
+    responseFemtoCellInfos(Parcel p) {
+        String strings[] = (String []) responseStrings(p);
+        ArrayList<FemtoCellInfo> ret;
 
-        ArrayList<ApnSetting> response = new ArrayList<ApnSetting>(nProfiles);
-
-        int profileId = 0;
-        int priority = 0;
-        for (int i = 0; i < nProfiles; i++) {
-            profileId = p.readInt();
-            priority = p.readInt();
-            ApnProfileOmh profile = new ApnProfileOmh(profileId, priority);
-            if (RILJ_LOGD) {
-                riljLog("responseGetDataCallProfile()" +
-                        profile.getProfileId() + ":" + profile.getPriority());
-            }
-            response.add(profile);
+        if (strings.length % 6 != 0) {
+            throw new RuntimeException(
+                "RIL_REQUEST_GET_FEMTOCELL_LIST: invalid response. Got "
+                + strings.length + " strings, expected multible of 6");
         }
 
-        return response;
-    }
+        ret = new ArrayList<FemtoCellInfo>(strings.length / 6);
 
-    protected void
+        /* <plmn numeric>,<act>,<plmn long alpha name>,<csgId>,,csgIconType>,<hnbName> */
+        for (int i = 0 ; i < strings.length ; i += 6) {
+            String actStr;
+            String hnbName;
+            int rat;
+
+            /* ALPS00273663 handle UCS2 format name : prefix + hex string ex: "uCs2806F767C79D1" */
+            if ((strings[i + 1] != null) && (strings[i + 1].startsWith("uCs2") == true))
+            {
+                Rlog.d(RILJ_LOG_TAG, "responseOperatorInfos handling UCS2 format name");
+
+                try {
+                    strings[i + 0] = new String(IccUtils.hexStringToBytes(strings[i + 1].substring(4)), "UTF-16");
+                } catch (UnsupportedEncodingException ex) {
+                    Rlog.d(RILJ_LOG_TAG, "responseOperatorInfos UnsupportedEncodingException");
+                }
+            }
+
+            if (strings[i + 1] != null && (strings[i + 1].equals("") || strings[i + 1].equals(strings[i + 0]))) {
+                Rlog.d(RILJ_LOG_TAG, "lookup RIL responseFemtoCellInfos() for plmn id= " + strings[i + 0]);
+                strings[i + 1] = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 0], true, mContext);
+            }
+
+            if (strings[i + 2].equals("7")) {
+                actStr = "4G";
+                rat = ServiceState.RIL_RADIO_TECHNOLOGY_LTE;
+            } else if (strings[i + 2].equals("2")) {
+                actStr = "3G";
+                rat = ServiceState.RIL_RADIO_TECHNOLOGY_UMTS;
+            } else {
+                actStr = "2G";
+                rat = ServiceState.RIL_RADIO_TECHNOLOGY_GPRS;
+            }
+
+            //1 and 2 is 2g. above 2 is 3g
+            String property_name = "gsm.baseband.capability";
+            if (mInstanceId > PhoneConstants.SIM_ID_1) {
+                property_name = property_name + (mInstanceId + 1) ;
+            }
+
+            int basebandCapability = SystemProperties.getInt(property_name, 3);
+            Rlog.d(RILJ_LOG_TAG, "property_name=" + property_name + ",basebandCapability=" + basebandCapability);
+            if (3 < basebandCapability) {
+                strings[i + 1] = strings[i + 1].concat(" " + actStr);
+            }
+
+            hnbName = new String(IccUtils.hexStringToBytes(strings[i + 5]));
+
+            Rlog.d(RILJ_LOG_TAG, "FemtoCellInfo(" + strings[i + 3] + "," + strings[i + 4] + "," + strings[i + 5] + "," + strings[i + 0] + "," + strings[i + 1] + "," + rat + ")" + "hnbName=" + hnbName);
+
+            ret.add(
+                new FemtoCellInfo(
+                    Integer.parseInt(strings[i + 3]),
+                    Integer.parseInt(strings[i + 4]),
+                    hnbName,
+                    strings[i + 0],
+                    strings[i + 1],
+                    rat));
+        }
+
+        return ret;
+    }
+    //MTK-END Femtocell (CSG)
+
+    private void
     notifyRegistrantsCdmaInfoRec(CdmaInformationRecords infoRec) {
         int response = RIL_UNSOL_CDMA_INFO_REC;
         if (infoRec.record instanceof CdmaInformationRecords.CdmaDisplayInfoRec) {
@@ -4284,7 +5190,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
     }
 
-    protected ArrayList<CellInfo> responseCellInfoList(Parcel p) {
+    private ArrayList<CellInfo> responseCellInfoList(Parcel p) {
         int numberOfInfoRecs;
         ArrayList<CellInfo> response;
 
@@ -4303,7 +5209,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         return response;
     }
 
-   protected Object
+   private Object
    responseHardwareConfig(Parcel p) {
       int num;
       ArrayList<HardwareConfig> response;
@@ -4341,6 +5247,20 @@ public class RIL extends BaseCommands implements CommandsInterface {
       return response;
    }
 
+    private Object
+    responsePhoneId() {
+        return mInstanceId;
+    }
+
+    private Object
+    responseSetPhoneRatChanged(Parcel p) {
+        int num = p.readInt();
+        int rat = p.readInt();
+        PhoneRatFamily response = new PhoneRatFamily(mInstanceId, rat);
+
+        return response;
+    }
+
     static String
     requestToString(int request) {
 /*
@@ -4356,7 +5276,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_ENTER_SIM_PUK2: return "ENTER_SIM_PUK2";
             case RIL_REQUEST_CHANGE_SIM_PIN: return "CHANGE_SIM_PIN";
             case RIL_REQUEST_CHANGE_SIM_PIN2: return "CHANGE_SIM_PIN2";
-            case RIL_REQUEST_ENTER_DEPERSONALIZATION_CODE: return "ENTER_DEPERSONALIZATION_CODE";
+            case RIL_REQUEST_ENTER_NETWORK_DEPERSONALIZATION: return "ENTER_NETWORK_DEPERSONALIZATION";
             case RIL_REQUEST_GET_CURRENT_CALLS: return "GET_CURRENT_CALLS";
             case RIL_REQUEST_DIAL: return "DIAL";
             case RIL_REQUEST_GET_IMSI: return "GET_IMSI";
@@ -4378,6 +5298,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_SETUP_DATA_CALL: return "SETUP_DATA_CALL";
             case RIL_REQUEST_SIM_IO: return "SIM_IO";
             case RIL_REQUEST_SEND_USSD: return "SEND_USSD";
+            /* M: SS part */
+            ///M: For query CNAP
+            case RIL_REQUEST_SEND_CNAP: return "SEND_CNAP";
+            /* M: SS part end */
             case RIL_REQUEST_CANCEL_USSD: return "CANCEL_USSD";
             case RIL_REQUEST_GET_CLIR: return "GET_CLIR";
             case RIL_REQUEST_SET_CLIR: return "SET_CLIR";
@@ -4397,6 +5321,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC: return "SET_NETWORK_SELECTION_AUTOMATIC";
             case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL: return "SET_NETWORK_SELECTION_MANUAL";
             case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS : return "QUERY_AVAILABLE_NETWORKS ";
+            case RIL_REQUEST_ABORT_QUERY_AVAILABLE_NETWORKS : return "ABORT_QUERY_AVAILABLE_NETWORKS";
             case RIL_REQUEST_DTMF_START: return "DTMF_START";
             case RIL_REQUEST_DTMF_STOP: return "DTMF_STOP";
             case RIL_REQUEST_BASEBAND_VERSION: return "BASEBAND_VERSION";
@@ -4453,7 +5378,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_REPORT_SMS_MEMORY_STATUS: return "RIL_REQUEST_REPORT_SMS_MEMORY_STATUS";
             case RIL_REQUEST_REPORT_STK_SERVICE_IS_RUNNING: return "RIL_REQUEST_REPORT_STK_SERVICE_IS_RUNNING";
             case RIL_REQUEST_CDMA_GET_SUBSCRIPTION_SOURCE: return "RIL_REQUEST_CDMA_GET_SUBSCRIPTION_SOURCE";
-            case RIL_REQUEST_GET_DATA_CALL_PROFILE: return "RIL_REQUEST_GET_DATA_CALL_PROFILE";
             case RIL_REQUEST_ISIM_AUTHENTICATION: return "RIL_REQUEST_ISIM_AUTHENTICATION";
             case RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU: return "RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU";
             case RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS: return "RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS";
@@ -4477,6 +5401,138 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_GET_HARDWARE_CONFIG: return "GET_HARDWARE_CONFIG";
             case RIL_REQUEST_SIM_AUTHENTICATION: return "RIL_REQUEST_SIM_AUTHENTICATION";
             case RIL_REQUEST_SHUTDOWN: return "RIL_REQUEST_SHUTDOWN";
+            case RIL_REQUEST_SET_PHONE_RAT_FAMILY: return "RIL_REQUEST_SET_PHONE_RAT_FAMILY";
+            case RIL_REQUEST_GET_PHONE_RAT_FAMILY: return "RIL_REQUEST_GET_PHONE_RAT_FAMILY";
+
+            /* M: call control part start */
+            case RIL_REQUEST_HANGUP_ALL: return "HANGUP_ALL";
+            case RIL_REQUEST_FORCE_RELEASE_CALL: return "FORCE_RELEASE_CALL";
+            case RIL_REQUEST_SET_CALL_INDICATION: return "SET_CALL_INDICATION";
+            case RIL_REQUEST_EMERGENCY_DIAL: return "EMERGENCY_DIAL";
+            case RIL_REQUEST_SET_ECC_SERVICE_CATEGORY: return "SET_ECC_SERVICE_CATEGORY";
+            case RIL_REQUEST_SET_ECC_LIST: return "SET_ECC_LIST";
+            case RIL_REQUEST_SET_SPEECH_CODEC_INFO: return "SET_SPEECH_CODEC_INFO";
+            /* M: call control part end */
+
+            /// M: IMS feature. @{
+            case RIL_REQUEST_ADD_IMS_CONFERENCE_CALL_MEMBER: return "RIL_REQUEST_ADD_IMS_CONFERENCE_CALL_MEMBER";
+            case RIL_REQUEST_REMOVE_IMS_CONFERENCE_CALL_MEMBER: return "RIL_REQUEST_REMOVE_IMS_CONFERENCE_CALL_MEMBER";
+            case RIL_REQUEST_DIAL_WITH_SIP_URI: return "RIL_REQUEST_DIAL_WITH_SIP_URI";
+            case RIL_REQUEST_RETRIEVE_HELD_CALL: return "RIL_REQUEST_RETRIEVE_HELD_CALL";
+            /// @}
+
+            //MTK-START SIM ME lock
+            case RIL_REQUEST_QUERY_SIM_NETWORK_LOCK: return "QUERY_SIM_NETWORK_LOCK";
+            case RIL_REQUEST_SET_SIM_NETWORK_LOCK: return "SET_SIM_NETWORK_LOCK";
+            //MTK-END SIM ME lock
+            //ISIM
+            case RIL_REQUEST_GENERAL_SIM_AUTH: return "RIL_REQUEST_GENERAL_SIM_AUTH";
+            case RIL_REQUEST_OPEN_ICC_APPLICATION: return "RIL_REQUEST_OPEN_ICC_APPLICATION";
+            case RIL_REQUEST_GET_ICC_APPLICATION_STATUS: return "RIL_REQUEST_GET_ICC_APPLICATION_STATUS";
+            case RIL_REQUEST_SIM_IO_EX: return "SIM_IO_EX";
+
+            // PHB Start
+            case RIL_REQUEST_QUERY_PHB_STORAGE_INFO: return "RIL_REQUEST_QUERY_PHB_STORAGE_INFO";
+            case RIL_REQUEST_WRITE_PHB_ENTRY: return "RIL_REQUEST_WRITE_PHB_ENTRY";
+            case RIL_REQUEST_READ_PHB_ENTRY: return "RIL_REQUEST_READ_PHB_ENTRY";
+            case RIL_REQUEST_QUERY_UPB_CAPABILITY: return "RIL_REQUEST_QUERY_UPB_CAPABILITY";
+            case RIL_REQUEST_EDIT_UPB_ENTRY: return "RIL_REQUEST_EDIT_UPB_ENTRY";
+            case RIL_REQUEST_DELETE_UPB_ENTRY: return "RIL_REQUEST_DELETE_UPB_ENTRY";
+            case RIL_REQUEST_READ_UPB_GAS_LIST: return "RIL_REQUEST_READ_UPB_GAS_LIST";
+            case RIL_REQUEST_READ_UPB_GRP: return "RIL_REQUEST_READ_UPB_GRP";
+            case RIL_REQUEST_WRITE_UPB_GRP: return "RIL_REQUEST_WRITE_UPB_GRP";
+            case RIL_REQUEST_GET_PHB_STRING_LENGTH: return "RIL_REQUEST_GET_PHB_STRING_LENGTH";
+            case RIL_REQUEST_GET_PHB_MEM_STORAGE: return "RIL_REQUEST_GET_PHB_MEM_STORAGE";
+            case RIL_REQUEST_SET_PHB_MEM_STORAGE: return "RIL_REQUEST_SET_PHB_MEM_STORAGE";
+            case RIL_REQUEST_READ_PHB_ENTRY_EXT: return "RIL_REQUEST_READ_PHB_ENTRY_EXT";
+            case RIL_REQUEST_WRITE_PHB_ENTRY_EXT: return "RIL_REQUEST_WRITE_PHB_ENTRY_EXT";
+            // PHB End
+
+            /* M: network part start */
+            case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL_WITH_ACT: return "SET_NETWORK_SELECTION_MANUAL_WITH_ACT";
+            case RIL_REQUEST_GET_POL_CAPABILITY: return "RIL_REQUEST_GET_POL_CAPABILITY";
+            case RIL_REQUEST_GET_POL_LIST: return "RIL_REQUEST_GET_POL_LIST";
+            case RIL_REQUEST_SET_POL_ENTRY: return "RIL_REQUEST_SET_POL_ENTRY";
+            case RIL_REQUEST_SET_TRM: return "RIL_REQUEST_SET_TRM";
+            case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT : return "QUERY_AVAILABLE_NETWORKS_WITH_ACT";
+            //Femtocell (CSG) feature START
+            case RIL_REQUEST_GET_FEMTOCELL_LIST: return "RIL_REQUEST_GET_FEMTOCELL_LIST";
+            case RIL_REQUEST_ABORT_FEMTOCELL_LIST: return "RIL_REQUEST_ABORT_FEMTOCELL_LIST";
+            case RIL_REQUEST_SELECT_FEMTOCELL: return "RIL_REQUEST_SELECT_FEMTOCELL";
+            //Femtocell (CSG) feature END
+            /* M: network part end */
+            case RIL_REQUEST_STK_EVDL_CALL_BY_AP: return "RIL_REQUEST_STK_EVDL_CALL_BY_AP";
+            case RIL_REQUEST_QUERY_MODEM_TYPE: return "RIL_REQUEST_QUERY_MODEM_TYPE";
+            case RIL_REQUEST_STORE_MODEM_TYPE: return "RIL_REQUEST_STORE_MODEM_TYPE";
+            case RIL_REQUEST_SIM_GET_ATR: return "SIM_GET_ATR";
+            case RIL_REQUEST_SIM_OPEN_CHANNEL_WITH_SW: return "SIM_OPEN_CHANNEL_WITH_SW";
+            //VoLTE
+            case RIL_REQUEST_SETUP_DEDICATE_DATA_CALL: return "RIL_REQUEST_SETUP_DEDICATE_DATA_CALL";
+            case RIL_REQUEST_DEACTIVATE_DEDICATE_DATA_CALL: return "RIL_REQUEST_DEACTIVATE_DEDICATE_DATA_CALL";
+            case RIL_REQUEST_MODIFY_DATA_CALL: return "RIL_REQUEST_MODIFY_DATA_CALL";
+            case RIL_REQUEST_ABORT_SETUP_DATA_CALL: return "RIL_REQUEST_ABORT_SETUP_DATA_CALL";
+            case RIL_REQUEST_PCSCF_DISCOVERY_PCO: return "RIL_REQUEST_PCSCF_DISCOVERY_PCO";
+            case RIL_REQUEST_CLEAR_DATA_BEARER: return "RIL_REQUEST_CLEAR_DATA_BEARER";
+
+            // IMS
+            case RIL_REQUEST_SET_IMS_ENABLE: return "RIL_REQUEST_SET_IMS_ENABLE";
+
+            // M: Fast Dormancy
+            case RIL_REQUEST_SET_SCRI: return "RIL_REQUEST_SET_SCRI";
+            case RIL_REQUEST_SET_FD_MODE: return "RIL_REQUEST_SET_FD_MODE";
+            // MTK-START, SMS part
+            case RIL_REQUEST_GET_SMS_PARAMS: return "RIL_REQUEST_GET_SMS_PARAMS";
+            case RIL_REQUEST_SET_SMS_PARAMS: return "RIL_REQUEST_SET_SMS_PARAMS";
+            case RIL_REQUEST_GET_SMS_SIM_MEM_STATUS: return "RIL_REQUEST_GET_SMS_SIM_MEM_STATUS";
+            case RIL_REQUEST_SET_ETWS: return "RIL_REQUEST_SET_ETWS";
+            case RIL_REQUEST_SET_CB_CHANNEL_CONFIG_INFO:
+                return "RIL_REQUEST_SET_CB_CHANNEL_CONFIG_INFO";
+            case RIL_REQUEST_SET_CB_LANGUAGE_CONFIG_INFO:
+                return "RIL_REQUEST_SET_CB_LANGUAGE_CONFIG_INFO";
+            case RIL_REQUEST_GET_CB_CONFIG_INFO: return "RIL_REQUEST_GET_CB_CONFIG_INFO";
+            case RIL_REQUEST_REMOVE_CB_MESSAGE: return "RIL_REQUEST_REMOVE_CB_MESSAGE";
+            // MTK-END, SMS part
+            case RIL_REQUEST_SET_DATA_CENTRIC: return "RIL_REQUEST_SET_DATA_CENTRIC";
+
+            case RIL_REQUEST_MODEM_POWEROFF: return "MODEM_POWEROFF";
+            case RIL_REQUEST_MODEM_POWERON: return "MODEM_POWERON";
+            // M: CC33 LTE.
+            case RIL_REQUEST_SET_DATA_ON_TO_MD: return "RIL_REQUEST_SET_DATA_ON_TO_MD";
+            case RIL_REQUEST_SET_REMOVE_RESTRICT_EUTRAN_MODE: return "RIL_REQUEST_SET_REMOVE_RESTRICT_EUTRAN_MODE";
+            case RIL_REQUEST_BTSIM_CONNECT: return "RIL_REQUEST_BTSIM_CONNECT";
+            case RIL_REQUEST_BTSIM_DISCONNECT_OR_POWEROFF: return "RIL_REQUEST_BTSIM_DISCONNECT_OR_POWEROFF";
+            case RIL_REQUEST_BTSIM_POWERON_OR_RESETSIM: return "RIL_REQUEST_BTSIM_POWERON_OR_RESETSIM";
+            case RIL_REQUEST_BTSIM_TRANSFERAPDU: return "RIL_REQUEST_SEND_BTSIM_TRANSFERAPDU";
+
+            /* M: call control part start */
+            case RIL_REQUEST_SET_IMS_CALL_STATUS: return "RIL_REQUEST_SET_IMS_CALL_STATUS";
+            /* M: call control part end */
+            
+
+            /* M: C2K part start */
+            case RIL_REQUEST_GET_NITZ_TIME: return "RIL_REQUEST_GET_NITZ_TIME";
+            case RIL_REQUEST_QUERY_UIM_INSERTED: return "RIL_REQUEST_QUERY_UIM_INSERTED";
+            case RIL_REQUEST_SWITCH_HPF: return "RIL_REQUEST_SWITCH_HPF";
+            case RIL_REQUEST_SET_AVOID_SYS: return "RIL_REQUEST_SET_AVOID_SYS";
+            case RIL_REQUEST_QUERY_AVOID_SYS: return "RIL_REQUEST_QUERY_AVOID_SYS";
+            case RIL_REQUEST_QUERY_CDMA_NETWORK_INFO: return "RIL_REQUEST_QUERY_CDMA_NETWORK_INFO";
+            case RIL_REQUEST_GET_LOCAL_INFO: return "RIL_REQUEST_GET_LOCAL_INFO";
+            case RIL_REQUEST_UTK_REFRESH: return "RIL_REQUEST_UTK_REFRESH";
+            case RIL_REQUEST_QUERY_SMS_AND_PHONEBOOK_STATUS:
+                return "RIL_REQUEST_QUERY_SMS_AND_PHONEBOOK_STATUS";
+            case RIL_REQUEST_QUERY_NETWORK_REGISTRATION:
+                return "RIL_REQUEST_QUERY_NETWORK_REGISTRATION";
+            case RIL_REQUEST_AGPS_TCP_CONNIND: return "RIL_REQUEST_AGPS_TCP_CONNIND";
+            case RIL_REQUEST_AGPS_SET_MPC_IPPORT: return "RIL_REQUEST_AGPS_SET_MPC_IPPORT";
+            case RIL_REQUEST_AGPS_GET_MPC_IPPORT: return "RIL_REQUEST_AGPS_GET_MPC_IPPORT";
+            case RIL_REQUEST_SET_MEID: return "RIL_REQUEST_SET_MEID";
+            case RIL_REQUEST_SET_REG_RESUME: return "RIL_REQUEST_SET_REG_RESUME";
+            case RIL_REQUEST_ENABLE_REG_PAUSE: return "RIL_REQUEST_ENABLE_REG_PAUSE";
+            case RIL_REQUEST_SET_ETS_DEV: return "RIL_REQUEST_SET_ETS_DEV";
+            case RIL_REQUEST_WRITE_MDN: return "RIL_REQUEST_WRITE_MDN";
+            case RIL_REQUEST_SET_VIA_TRM: return "RIL_REQUEST_SET_VIA_TRM";
+            case RIL_REQUEST_SET_ARSI_THRESHOLD: return "RIL_REQUEST_SET_ARSI_THRESHOLD";
+            /* M: C2K part end */
             default: return "<unknown request>";
         }
     }
@@ -4534,76 +5590,113 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_SRVCC_STATE_NOTIFY:
                     return "UNSOL_SRVCC_STATE_NOTIFY";
             case RIL_UNSOL_HARDWARE_CONFIG_CHANGED: return "RIL_UNSOL_HARDWARE_CONFIG_CHANGED";
-            case RIL_UNSOL_ON_SS: return "UNSOL_ON_SS";
-            case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: return "UNSOL_STK_CC_ALPHA_NOTIFY";
-            case RIL_UNSOL_STK_SEND_SMS_RESULT: return "RIL_UNSOL_STK_SEND_SMS_RESULT";
+            case RIL_UNSOL_SET_PHONE_RAT_FAMILY_COMPLETE:
+                    return "RIL_UNSOL_SET_PHONE_RAT_FAMILY_COMPLETE";
+            /* M: call control part start */
+            case RIL_UNSOL_CALL_FORWARDING: return "UNSOL_CALL_FORWARDING";
+            case RIL_UNSOL_CRSS_NOTIFICATION: return "UNSOL_CRSS_NOTIFICATION";
+            case RIL_UNSOL_INCOMING_CALL_INDICATION: return "UNSOL_INCOMING_CALL_INDICATION";
+            case RIL_UNSOL_CIPHER_INDICATION: return "UNSOL_CIPHER_INDICATION";
+            case RIL_UNSOL_CNAP: return "UNSOL_CNAP";
+            case RIL_UNSOL_SPEECH_CODEC_INFO: return "UNSOL_SPEECH_CODEC_INFO";
+            /* M: call control part end */
+            //MTK-START multiple application support
+            case RIL_UNSOL_APPLICATION_SESSION_ID_CHANGED: return "RIL_UNSOL_APPLICATION_SESSION_ID_CHANGED";
+            //MTK-END multiple application support
+            case RIL_UNSOL_SIM_MISSING: return "UNSOL_SIM_MISSING";
+            case RIL_UNSOL_VIRTUAL_SIM_ON: return "UNSOL_VIRTUAL_SIM_ON";
+            case RIL_UNSOL_VIRTUAL_SIM_OFF: return "UNSOL_VIRTUAL_SIM_ON_OFF";
+            case RIL_UNSOL_SIM_RECOVERY: return "UNSOL_SIM_RECOVERY";
+            case RIL_UNSOL_SIM_PLUG_OUT: return "UNSOL_SIM_PLUG_OUT";
+            case RIL_UNSOL_SIM_PLUG_IN: return "UNSOL_SIM_PLUG_IN";
+            case RIL_UNSOL_SIM_COMMON_SLOT_NO_CHANGED: return "RIL_UNSOL_SIM_COMMON_SLOT_NO_CHANGED";
+            case RIL_UNSOL_DATA_ALLOWED: return "RIL_UNSOL_DATA_ALLOWED";
+            case RIL_UNSOL_PHB_READY_NOTIFICATION: return "UNSOL_PHB_READY_NOTIFICATION";
+            case RIL_UNSOL_IMEI_LOCK: return "UNSOL_IMEI_LOCK";
+            case RIL_UNSOL_RESPONSE_ACMT: return "UNSOL_ACMT_INFO";
+            case RIL_UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED: return "UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED";
+            case RIL_UNSOL_RESPONSE_MMRR_STATUS_CHANGED: return "UNSOL_RESPONSE_MMRR_STATUS_CHANGED";
+            case RIL_UNSOL_NEIGHBORING_CELL_INFO: return "UNSOL_NEIGHBORING_CELL_INFO";
+            case RIL_UNSOL_NETWORK_INFO: return "UNSOL_NETWORK_INFO";
+            case RIL_UNSOL_INVALID_SIM: return "RIL_UNSOL_INVALID_SIM";
+            case RIL_UNSOL_IMS_ENABLE_DONE: return "RIL_UNSOL_IMS_ENABLE_DONE";
+            case RIL_UNSOL_IMS_DISABLE_DONE: return "RIL_UNSOL_IMS_DISABLE_DONE";
+            case RIL_UNSOL_IMS_REGISTRATION_INFO: return "RIL_UNSOL_IMS_REGISTRATION_INFO";
+            case RIL_UNSOL_STK_SETUP_MENU_RESET: return "RIL_UNSOL_STK_SETUP_MENU_RESET";
+            case RIL_UNSOL_RESPONSE_PLMN_CHANGED: return "RIL_UNSOL_RESPONSE_PLMN_CHANGED";
+            case RIL_UNSOL_RESPONSE_REGISTRATION_SUSPENDED: return "RIL_UNSOL_RESPONSE_REGISTRATION_SUSPENDED";
+            //VoLTE
+            case RIL_UNSOL_DEDICATE_BEARER_ACTIVATED: return "RIL_UNSOL_DEDICATE_BEARER_ACTIVATED";
+            case RIL_UNSOL_DEDICATE_BEARER_MODIFIED: return "RIL_UNSOL_DEDICATE_BEARER_MODIFIED";
+            //Remote SIM ME lock related APIs [Start]
+            case RIL_UNSOL_MELOCK_NOTIFICATION: return "RIL_UNSOL_MELOCK_NOTIFICATION";
+            //Remote SIM ME lock related APIs [End]
+            // M: Fast Dormancy
+            case RIL_UNSOL_SCRI_RESULT: return "RIL_UNSOL_SCRI_RESULT";
+            case RIL_UNSOL_STK_EVDL_CALL: return "RIL_UNSOL_STK_EVDL_CALL";
+            case RIL_UNSOL_STK_CALL_CTRL: return "RIL_UNSOL_STK_CALL_CTRL";
+
+            /// M: IMS feature. @{
+            case RIL_UNSOL_ECONF_SRVCC_INDICATION: return "RIL_UNSOL_ECONF_SRVCC_INDICATION";
+            //For updating conference call merged/added result.
+            case RIL_UNSOL_ECONF_RESULT_INDICATION: return "RIL_UNSOL_ECONF_RESULT_INDICATION";
+            //For updating call mode and pau information.
+            case RIL_UNSOL_CALL_INFO_INDICATION : return "RIL_UNSOL_CALL_INFO_INDICATION";
+            /// @}
+
+            case RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_INFO: return "RIL_UNSOL_VOLTE_EPS_NETWORK_FEATURE_INFO";
+            case RIL_UNSOL_SRVCC_HANDOVER_INFO_INDICATION: return "RIL_UNSOL_SRVCC_HANDOVER_INFO_INDICATION";
+            // M: CC33 LTE.
+            case RIL_UNSOL_RAC_UPDATE: return "RIL_UNSOL_RAC_UPDATE";
+            case RIL_UNSOL_REMOVE_RESTRICT_EUTRAN: return "RIL_UNSOL_REMOVE_RESTRICT_EUTRAN";
+
+            //MTK-START for MD state change
+            case RIL_UNSOL_MD_STATE_CHANGE: return "RIL_UNSOL_MD_STATE_CHANGE";
+            //MTK-END for MD state change
+            
+            case RIL_UNSOL_MO_DATA_BARRING_INFO: return "RIL_UNSOL_MO_DATA_BARRING_INFO";
+            case RIL_UNSOL_SSAC_BARRING_INFO: return "RIL_UNSOL_SSAC_BARRING_INFO";
+//MTK_TC1_FEATURE for LGE CSMCC_MO_CALL_MODIFIED { 
+			case RIL_UNSOL_RESPONSE_MO_CALL_STATE_CHANGED: return "UNSOL_RESPONSE_MO_CALL_STATE_CHANGED";
+//}
+            /* M: C2K part start */
+            case RIL_UNSOL_CDMA_CALL_ACCEPTED: return "RIL_UNSOL_CDMA_CALL_ACCEPTED";
+            case RIL_UNSOL_UTK_SESSION_END: return "RIL_UNSOL_UTK_SESSION_END";
+            case RIL_UNSOL_UTK_PROACTIVE_COMMAND: return "RIL_UNSOL_UTK_PROACTIVE_COMMAND";
+            case RIL_UNSOL_UTK_EVENT_NOTIFY: return "RIL_UNSOL_UTK_EVENT_NOTIFY";
+            case RIL_UNSOL_VIA_GPS_EVENT: return "RIL_UNSOL_VIA_GPS_EVENT";
+            case RIL_UNSOL_VIA_NETWORK_TYPE_CHANGE: return "RIL_UNSOL_VIA_NETWORK_TYPE_CHANGE";
+            case RIL_UNSOL_VIA_PLMN_CHANGE_REG_PAUSE: return "RIL_UNSOL_VIA_PLMN_CHANGE_REG_PAUSE";
+            case RIL_UNSOL_VIA_INVALID_SIM_DETECTED: return "RIL_UNSOL_VIA_INVALID_SIM_DETECTED";
+            /* M: C2K part end */
             default: return "<unknown response>";
         }
     }
 
-    protected void riljLog(String msg) {
+    private void riljLog(String msg) {
         Rlog.d(RILJ_LOG_TAG, msg
                 + (mInstanceId != null ? (" [SUB" + mInstanceId + "]") : ""));
     }
 
-    protected void riljLogv(String msg) {
+    private void riljLogv(String msg) {
         Rlog.v(RILJ_LOG_TAG, msg
                 + (mInstanceId != null ? (" [SUB" + mInstanceId + "]") : ""));
     }
 
-    protected void unsljLog(int response) {
+    private void unsljLog(int response) {
         riljLog("[UNSL]< " + responseToString(response));
     }
 
-    protected void unsljLogMore(int response, String more) {
+    private void unsljLogMore(int response, String more) {
         riljLog("[UNSL]< " + responseToString(response) + " " + more);
     }
 
-    protected void unsljLogRet(int response, Object ret) {
+    private void unsljLogRet(int response, Object ret) {
         riljLog("[UNSL]< " + responseToString(response) + " " + retToString(response, ret));
     }
 
-    protected void unsljLogvRet(int response, Object ret) {
+    private void unsljLogvRet(int response, Object ret) {
         riljLogv("[UNSL]< " + responseToString(response) + " " + retToString(response, ret));
-    }
-
-    private Object
-    responseSsData(Parcel p) {
-        int num;
-        SsData ssData = new SsData();
-
-        ssData.serviceType = ssData.ServiceTypeFromRILInt(p.readInt());
-        ssData.requestType = ssData.RequestTypeFromRILInt(p.readInt());
-        ssData.teleserviceType = ssData.TeleserviceTypeFromRILInt(p.readInt());
-        ssData.serviceClass = p.readInt(); // This is service class sent in the SS request.
-        ssData.result = p.readInt(); // This is the result of the SS request.
-        num = p.readInt();
-
-        if (ssData.serviceType.isTypeCF() &&
-            ssData.requestType.isTypeInterrogation()) {
-            ssData.cfInfo = new CallForwardInfo[num];
-
-            for (int i = 0; i < num; i++) {
-                ssData.cfInfo[i] = new CallForwardInfo();
-
-                ssData.cfInfo[i].status = p.readInt();
-                ssData.cfInfo[i].reason = p.readInt();
-                ssData.cfInfo[i].serviceClass = p.readInt();
-                ssData.cfInfo[i].toa = p.readInt();
-                ssData.cfInfo[i].number = p.readString();
-                ssData.cfInfo[i].timeSeconds = p.readInt();
-
-                riljLog("[SS Data] CF Info " + i + " : " +  ssData.cfInfo[i]);
-            }
-        } else {
-            ssData.ssInfo = new int[num];
-            for (int i = 0; i < num; i++) {
-                ssData.ssInfo[i] = p.readInt();
-                riljLog("[SS Data] SS Info " + i + " : " +  ssData.ssInfo[i]);
-            }
-        }
-
-        return ssData;
     }
 
 
@@ -4859,9 +5952,15 @@ public class RIL extends BaseCommands implements CommandsInterface {
         send(rr);
     }
 
+    /** M: add extra parameter */
     public void setInitialAttachApn(String apn, String protocol, int authType, String username,
             String password, Message result) {
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_INITIAL_ATTACH_APN, result);
+        setInitialAttachApn(apn, protocol, authType, username, password, "", false, result);
+    }
+
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_INITIAL_ATTACH_APN, null);
 
         if (RILJ_LOGD) riljLog("Set RIL_REQUEST_SET_INITIAL_ATTACH_APN");
 
@@ -4871,12 +5970,50 @@ public class RIL extends BaseCommands implements CommandsInterface {
         rr.mParcel.writeString(username);
         rr.mParcel.writeString(password);
 
+        /** M: start */
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeInt(canHandleIms ? 1 : 0);
+        /* M: end */
+
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
                 + ", apn:" + apn + ", protocol:" + protocol + ", authType:" + authType
-                + ", username:" + username + ", password:" + password);
+                + ", username:" + username + ", password:" + password
+                + ", operatorNumeric:" + operatorNumeric + ", canHandleIms:" + canHandleIms);
 
         send(rr);
     }
+
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+                String password, String operatorNumeric, boolean canHandleIms,
+                String[] dualApnPlmnList, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_INITIAL_ATTACH_APN, null);
+
+        if (RILJ_LOGD) { riljLog("Set RIL_REQUEST_SET_INITIAL_ATTACH_APN"); }
+
+        rr.mParcel.writeString(apn);
+        rr.mParcel.writeString(protocol);
+        rr.mParcel.writeInt(authType);
+        rr.mParcel.writeString(username);
+        rr.mParcel.writeString(password);
+
+        /** M: start */
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeInt(canHandleIms ? 1 : 0);
+        /* M: end */
+
+        rr.mParcel.writeStringArray(dualApnPlmnList);
+
+        if (RILJ_LOGD) { riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", apn:" + apn + ", protocol:" + protocol + ", authType:" + authType
+                + ", username:" + username + ", password:" + password
+                + ", operatorNumeric:" + operatorNumeric
+              + ", dualApnPlmnList:" + dualApnPlmnList + ", canHandleIms:" + canHandleIms);
+        }
+
+        send(rr);
+    }
+
 
     public void setDataProfile(DataProfile[] dps, Message result) {
         if (RILJ_LOGD) riljLog("Set RIL_REQUEST_SET_DATA_PROFILE");
@@ -4933,16 +6070,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
      */
     @Override
     public void iccOpenLogicalChannel(String AID, Message response) {
-        if(mRilVersion < 10) {
-            if (response != null) {
-                CommandException ex = new CommandException(
-                    CommandException.Error.REQUEST_NOT_SUPPORTED);
-                AsyncResult.forMessage(response, null, ex);
-                response.sendToTarget();
-            }
-            return;
-        }
-
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_OPEN_CHANNEL, response);
         rr.mParcel.writeString(AID);
 
@@ -4973,17 +6100,6 @@ public class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
             int p1, int p2, int p3, String data, Message response) {
-
-        if(mRilVersion < 10) {
-            if (response != null) {
-                CommandException ex = new CommandException(
-                    CommandException.Error.REQUEST_NOT_SUPPORTED);
-                AsyncResult.forMessage(response, null, ex);
-                response.sendToTarget();
-            }
-            return;
-        }
-
         if (channel <= 0) {
             throw new RuntimeException(
                 "Invalid channel in iccTransmitApduLogicalChannel: " + channel);
@@ -5003,37 +6119,11 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 p1, p2, p3, data, response);
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public void getAtr(Message response) {
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_GET_ATR, response);
-        int slotId = 0;
-        rr.mParcel.writeInt(1);
-        rr.mParcel.writeInt(slotId);
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccGetAtr: "
-                + requestToString(rr.mRequest) + " " + slotId);
-
-        send(rr);
-    }
-
     /*
      * Helper function for the iccTransmitApdu* commands above.
      */
     private void iccTransmitApduHelper(int rilCommand, int channel, int cla,
             int instruction, int p1, int p2, int p3, String data, Message response) {
-
-        if(mRilVersion < 10) {
-            if (response != null) {
-                CommandException ex = new CommandException(
-                    CommandException.Error.REQUEST_NOT_SUPPORTED);
-                AsyncResult.forMessage(response, null, ex);
-                response.sendToTarget();
-            }
-            return;
-        }
-
         RILRequest rr = RILRequest.obtain(rilCommand, response);
         rr.mParcel.writeInt(channel);
         rr.mParcel.writeInt(cla);
@@ -5098,4 +6188,1772 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         send(rr);
     }
+
+    @Override
+    public void setPhoneRatFamily(int ratFamily, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_PHONE_RAT_FAMILY, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(ratFamily);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + ratFamily);
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void getPhoneRatFamily(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_PHONE_RAT_FAMILY, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    //MTK-START Support Multi-Application
+    @Override
+    public void openIccApplication(int application, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_OPEN_ICC_APPLICATION, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(application);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", application = " + application);
+        send(rr);
+    }
+
+    @Override
+    public void getIccApplicationStatus(int sessionId, Message result) {
+        //Note: This RIL request has not been renamed to ICC,
+        //       but this request is also valid for SIM and RUIM
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_ICC_APPLICATION_STATUS, result);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(sessionId);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", session = " + sessionId);
+        send(rr);
+    }
+
+    @Override public void
+    iccIOForAppEx(int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, int channel , Message result) {
+        //Note: This RIL request has not been renamed to ICC,
+        //       but this request is also valid for SIM and RUIM
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SIM_IO_EX, result);
+
+        rr.mParcel.writeInt(command);
+        rr.mParcel.writeInt(fileid);
+        rr.mParcel.writeString(path);
+        rr.mParcel.writeInt(p1);
+        rr.mParcel.writeInt(p2);
+        rr.mParcel.writeInt(p3);
+        rr.mParcel.writeString(data);
+        rr.mParcel.writeString(pin2);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeInt(channel);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: "
+                + requestToString(rr.mRequest)
+                + " 0x" + Integer.toHexString(command)
+                + " 0x" + Integer.toHexString(fileid) + " "
+                + " path: " + path + ","
+                + p1 + "," + p2 + "," + p3 + ",channel:" + channel
+                + " aid: " + aid);
+
+        send(rr);
+    }
+    //MTK-END Support Multi-Application
+
+    @Override public void
+    queryNetworkLock(int category, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_SIM_NETWORK_LOCK, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        riljLog("queryNetworkLock:" + category);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(category);
+
+        send(rr);
+    }
+
+    @Override public void
+    setNetworkLock(int catagory, int lockop, String password,
+                        String data_imsi, String gid1, String gid2, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SIM_NETWORK_LOCK, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        riljLog("setNetworkLock:" + catagory + ", " + lockop + ", " + password + ", " + data_imsi
+                + ", " + gid1 + ", " + gid2);
+
+        rr.mParcel.writeInt(6);
+        rr.mParcel.writeString(Integer.toString(catagory));
+        rr.mParcel.writeString(Integer.toString(lockop));
+        if (null != password) {
+            rr.mParcel.writeString(password);
+        } else {
+            rr.mParcel.writeString("");
+        }
+        rr.mParcel.writeString(data_imsi);
+        rr.mParcel.writeString(gid1);
+        rr.mParcel.writeString(gid2);
+
+        send(rr);
+    }
+
+    @Override public void
+    doGeneralSimAuthentication(int sessionId, int mode , int tag, String param1,
+                                         String param2, Message response) {
+
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GENERAL_SIM_AUTH, response);
+
+        rr.mParcel.writeInt(sessionId);
+        rr.mParcel.writeInt(mode);
+
+        // Calcuate param1 length in byte length
+        if (param1 != null && param1.length() > 0) {
+            String length = Integer.toHexString(param1.length() / 2);
+            length = (((length.length() % 2 == 1) ? "0" : "") + length);
+            // Session id is equal to 0, for backward compability, we use old AT command
+            // old AT command no need to include param's length
+            rr.mParcel.writeString(((sessionId == 0) ? param1 : (length + param1)));
+        } else {
+            rr.mParcel.writeString(param1);
+        }
+
+        // Calcuate param2 length in byte length
+        if (param2 != null && param2.length() > 0) {
+            String length = Integer.toHexString(param2.length() / 2);
+            length = (((length.length() % 2 == 1) ? "0" : "") + length);
+            // Session id is equal to 0, for backward compability, we use old AT command
+            // old AT command no need to include param's length
+            rr.mParcel.writeString(((sessionId == 0) ? param2 : (length + param2)));
+        } else {
+            rr.mParcel.writeString(param2);
+        }
+
+        if (mode == 1) {
+            rr.mParcel.writeInt(tag);
+        }
+
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " +
+            "session = " + sessionId + ",mode = " + mode + ",tag = " + tag + ", "  + param1 + ", " + param2);
+
+        send(rr);
+    }
+    // Added by M begin
+    @Override
+    public void
+    iccGetATR(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_GET_ATR, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void
+    iccOpenChannelWithSw(String AID, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_OPEN_CHANNEL_WITH_SW, result);
+
+        rr.mParcel.writeString(AID);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccOpenChannelWithSw: " + requestToString(rr.mRequest)
+                + " " + AID);
+
+        send(rr);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void sendBTSIMProfile(int nAction, int nType, String strData, Message response) {
+        if (RILJ_LOGD) riljLog(" sendBTSIMProfile nAction is " + nAction);
+        switch (nAction) {
+            case 0:
+                requestConnectSIM(response);
+                break;
+            case 1:
+                requestDisconnectOrPowerOffSIM(nAction, response);
+                break;
+            case 2:
+                requestPowerOnOrResetSIM(nAction, nType, response);
+                break;
+            case 3:
+                requestDisconnectOrPowerOffSIM(nAction, response);
+                break;
+            case 4:
+                requestPowerOnOrResetSIM(nAction, nType, response);
+                break;
+            case 5:
+                requestTransferApdu(nAction, nType, strData, response);
+                break;
+        }
+    }
+
+    //***** Private Methods
+    /**
+    * used only by sendBTSIMProfile
+    */
+    private void requestConnectSIM(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_BTSIM_CONNECT, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    /**
+    * used only by sendBTSIMProfile
+    */
+    private void requestDisconnectOrPowerOffSIM(int nAction, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_BTSIM_DISCONNECT_OR_POWEROFF, response);
+
+         rr.mParcel.writeString(Integer.toString(nAction));
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + nAction);
+
+        send(rr);
+    }
+
+    /**
+    * used only by sendBTSIMProfile
+    */
+    private void requestPowerOnOrResetSIM(int nAction, int nType, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_BTSIM_POWERON_OR_RESETSIM, response);
+
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(Integer.toString(nAction));
+        rr.mParcel.writeString(Integer.toString(nType));
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": "
+                + nAction + " nType: " + nType);
+
+        send(rr);
+    }
+
+    /**
+    * used only by sendBTSIMProfile
+    */
+    private void requestTransferApdu(int nAction, int nType, String strData, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_BTSIM_TRANSFERAPDU, response);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(Integer.toString(nAction));
+        rr.mParcel.writeString(Integer.toString(nType));
+        rr.mParcel.writeString(strData);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": "
+                + nAction + " nType: " + nType + " data: " + strData);
+
+        send(rr);
+    }
+    // Added by M end
+
+    /**
+     * {@inheritDoc}
+     */
+    public void queryPhbStorageInfo(int type, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_PHB_STORAGE_INFO, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(type);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + type);
+
+        send(rr);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void writePhbEntry(PhbEntry entry, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_WRITE_PHB_ENTRY, result);
+
+        rr.mParcel.writeInt(entry.type);
+        rr.mParcel.writeInt(entry.index);
+        rr.mParcel.writeString(entry.number);
+        rr.mParcel.writeInt(entry.ton);
+        rr.mParcel.writeString(entry.alphaId);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + entry);
+
+        send(rr);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void ReadPhbEntry(int type, int bIndex, int eIndex, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_READ_PHB_ENTRY, response);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeInt(type);
+        rr.mParcel.writeInt(bIndex);
+        rr.mParcel.writeInt(eIndex);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": "
+                + type + " begin: " + bIndex + " end: " + eIndex);
+
+        send(rr);
+    }
+
+    private Object
+    responsePhbEntries(Parcel p) {
+        int numerOfEntries;
+        PhbEntry[] response;
+
+        numerOfEntries = p.readInt();
+        response = new PhbEntry[numerOfEntries];
+
+        Rlog.d(RILJ_LOG_TAG, "Number: " + numerOfEntries);
+
+        for (int i = 0; i < numerOfEntries; i++) {
+            response[i] = new PhbEntry();
+            response[i].type = p.readInt();
+            response[i].index = p.readInt();
+            response[i].number = p.readString();
+            response[i].ton = p.readInt();
+            response[i].alphaId = p.readString();
+        }
+
+        return response;
+    }
+
+    public void queryUPBCapability(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_UPB_CAPABILITY, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void editUPBEntry(int entryType, int adnIndex, int entryIndex, String strVal, String tonForNum, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_EDIT_UPB_ENTRY, response);
+        if (entryType == 0) {
+            rr.mParcel.writeInt(5);
+        } else {
+            rr.mParcel.writeInt(4);
+        }
+        rr.mParcel.writeString(Integer.toString(entryType));
+        rr.mParcel.writeString(Integer.toString(adnIndex));
+        rr.mParcel.writeString(Integer.toString(entryIndex));
+        rr.mParcel.writeString(strVal);
+
+        if (entryType == 0) {
+            rr.mParcel.writeString(tonForNum);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+
+    }
+
+    public void deleteUPBEntry(int entryType, int adnIndex, int entryIndex, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_DELETE_UPB_ENTRY, response);
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeInt(entryType);
+        rr.mParcel.writeInt(adnIndex);
+        rr.mParcel.writeInt(entryIndex);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void readUPBGasList(int startIndex, int endIndex, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_READ_UPB_GAS_LIST, response);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeInt(startIndex);
+        rr.mParcel.writeInt(endIndex);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void readUPBGrpEntry(int adnIndex, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_READ_UPB_GRP, response);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(adnIndex);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void writeUPBGrpEntry(int adnIndex, int[] grpIds, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_WRITE_UPB_GRP, response);
+        int nLen = grpIds.length;
+        rr.mParcel.writeInt(nLen + 1);
+        rr.mParcel.writeInt(adnIndex);
+        for (int i = 0; i < nLen; i++) {
+            rr.mParcel.writeInt(grpIds[i]);
+        }
+        if (RILJ_LOGD) riljLog("writeUPBGrpEntry nLen is " + nLen);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+
+    }
+
+    private Object responseGetPhbMemStorage(Parcel p) {
+		/*
+        PBMemStorage response = PBMemStorage.createFromParcel(p);
+        riljLog("responseGetPhbMemStorage:" +  response);
+        return response;
+		*/
+		Rlog.e(RILJ_LOG_TAG, "responseGetPhbMemStorage: stub!");
+		return null;
+    }
+
+    private Object responseReadPhbEntryExt(Parcel p) {
+		/*
+        int numerOfEntries;
+        PBEntry[] response;
+
+        numerOfEntries = p.readInt();
+        response = new PBEntry[numerOfEntries];
+
+        Rlog.d(RILJ_LOG_TAG, "responseReadPhbEntryExt Number: " + numerOfEntries);
+
+        for (int i = 0; i < numerOfEntries; i++) {
+            response[i] = new PBEntry();
+            response[i].setIndex1(p.readInt());
+            response[i].setNumber(p.readString());
+            response[i].setType(p.readInt());
+            response[i].setText(p.readString());
+            response[i].setHidden(p.readInt());
+
+            response[i].setGroup(p.readString());
+            response[i].setAdnumber(p.readString());
+            response[i].setAdtype(p.readInt());
+            response[i].setSecondtext(p.readString());
+            response[i].setEmail(p.readString());
+            Rlog.d(RILJ_LOG_TAG, "responseReadPhbEntryExt[" + i + "] " + response[i].toString());
+        }
+
+        return response;
+		*/
+		Rlog.e(RILJ_LOG_TAG, "responseReadPhbEntryExt: stub!");
+		return null;
+    }
+
+    /**
+     * at+cpbr=?
+     * @return  <nlength><tlength><glength><slength><elength>
+     */
+	/*
+    public void getPhoneBookStringsLength(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_PHB_STRING_LENGTH, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> :::" + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+	*/
+
+    /**
+     * at+cpbs?
+     * @return  PBMemStorage :: +cpbs:<storage>,<used>,<total>
+     */
+	/*
+    public void getPhoneBookMemStorage(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_PHB_MEM_STORAGE, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> :::" + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+	*/
+
+    /**
+     * at+epin2=<p2>; at+cpbs=<storage>
+     * @return
+     */
+	/*
+    public void setPhoneBookMemStorage(String storage, String password, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_PHB_MEM_STORAGE, result);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(storage);
+        rr.mParcel.writeString(password);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> :::" + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+	*/
+
+    /**
+     * M at+cpbr=<index1>,<index2>
+     * +CPBR:<indexn>,<number>,<type>,<text>,<hidden>,<group>,<adnumber>,<adtype>,<secondtext>,<email>
+     */
+	/*
+    public void readPhoneBookEntryExt(int index1, int index2, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_READ_PHB_ENTRY_EXT, result);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeInt(index1);
+        rr.mParcel.writeInt(index2);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> :::" + requestToString(rr.mRequest));
+        send(rr);
+    }
+	*/
+
+    /**
+     * M AT+CPBW=<index>,<number>,<type>,<text>,<hidden>,<group>,<adnumber>,<adtype>,<secondtext>,<email>
+     */
+	/*
+    public void writePhoneBookEntryExt(PBEntry entry, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_WRITE_PHB_ENTRY_EXT, result);
+
+        rr.mParcel.writeInt(entry.getIndex1());
+        rr.mParcel.writeString(entry.getNumber());
+        rr.mParcel.writeInt(entry.getType());
+        rr.mParcel.writeString(entry.getText());
+        rr.mParcel.writeInt(entry.getHidden());
+
+        rr.mParcel.writeString(entry.getGroup());
+        rr.mParcel.writeString(entry.getAdnumber());
+        rr.mParcel.writeInt(entry.getAdtype());
+        rr.mParcel.writeString(entry.getSecondtext());
+        rr.mParcel.writeString(entry.getEmail());
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + entry);
+
+        send(rr);
+    }
+	*/
+
+    // MTK-START, SMS part
+    /**
+     * {@inheritDoc}
+     */
+    public void getSmsParameters(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_SMS_PARAMS, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    private Object
+    responseSmsParams(Parcel p) {
+        int format = p.readInt();
+        int vp = p.readInt();
+        int pid = p.readInt();
+        int dcs = p.readInt();
+
+        return new SmsParameters(format, vp, pid, dcs);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void setSmsParameters(SmsParameters params, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SMS_PARAMS, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        rr.mParcel.writeInt(4);
+        rr.mParcel.writeInt(params.format);
+        rr.mParcel.writeInt(params.vp);
+        rr.mParcel.writeInt(params.pid);
+        rr.mParcel.writeInt(params.dcs);
+
+        send(rr);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void getSmsSimMemoryStatus(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_SMS_SIM_MEM_STATUS, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    private Object responseSimSmsMemoryStatus(Parcel p) {
+        IccSmsStorageStatus response;
+
+        response = new IccSmsStorageStatus();
+        response.mUsed = p.readInt();
+        response.mTotal = p.readInt();
+        return response;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void setEtws(int mode, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ETWS, result);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(mode);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " +
+                mode);
+
+        send(rr);
+    }
+
+    public void setCellBroadcastChannelConfigInfo(String config, int cb_set_type,
+            Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_CB_CHANNEL_CONFIG_INFO, response);
+
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(config);
+        rr.mParcel.writeString(Integer.toString(cb_set_type));
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void setCellBroadcastLanguageConfigInfo(String config, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_CB_LANGUAGE_CONFIG_INFO, response);
+
+        rr.mParcel.writeString(config);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void queryCellBroadcastConfigInfo(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_CB_CONFIG_INFO, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    private Object responseCbConfig(Parcel p) {
+        int mode            = p.readInt();
+        String channels     = p.readString();
+        String languages    = p.readString();
+        boolean allOn       = (p.readInt() == 1) ? true : false;
+
+        return new CellBroadcastConfigInfo(mode, channels, languages, allOn);
+    }
+
+    public void removeCellBroadcastMsg(int channelId, int serialId, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_REMOVE_CB_MESSAGE, response);
+
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeInt(channelId);
+        rr.mParcel.writeInt(serialId);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " +
+            channelId + ", " + serialId);
+
+        send(rr);
+    }
+    // MTK-END, SMS part
+
+    public void setTrm(int mode, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_TRM, null);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(mode);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void setResumeRegistration(int sessionId, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_RESUME_REGISTRATION, response);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(sessionId);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void queryModemType(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_MODEM_TYPE, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void storeModemType(int modemType, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_STORE_MODEM_TYPE, response);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(modemType);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void setStkEvdlCallByAP(int enabled, Message response) {
+        RILRequest rr =
+                //RILRequest.obtain(RIL_REQUEST_STK_EVDL_CALL_BY_AP, response, mySimId);
+                RILRequest.obtain(RIL_REQUEST_STK_EVDL_CALL_BY_AP, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + ">>> " + requestToString(rr.mRequest));
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(enabled);
+        send(rr);
+    }
+
+    /* M: call control part start */
+    /**
+    * To check sub-permission for MoMS before using API.
+    *
+    * @param subPermission  The permission to be checked.
+    *
+    * @return Return true if the permission is granted else return false.
+    */
+    /*
+    private boolean checkMoMSSubPermission(String subPermission) {
+
+        try {
+            IMobileManagerService mMobileManager;
+            IBinder binder = ServiceManager.getService(Context.MOBILE_SERVICE);
+            mMobileManager = IMobileManagerService.Stub.asInterface(binder);
+            int result = mMobileManager.checkPermission(subPermission, Binder.getCallingUid());
+            if (result != PackageManager.PERMISSION_GRANTED) {
+                riljLog("[Error]Subpermission is not granted!!");
+                return false;
+            }
+        } catch (Exception e) {
+            riljLog("[Error]Failed to chcek permission: " +  subPermission);
+            return false;
+        }
+
+        return true;
+    }
+	*/
+
+    private Object
+    responseCrssNotification(Parcel p) {
+
+        SuppCrssNotification notification = new SuppCrssNotification();
+
+        notification.code = p.readInt();
+        notification.type = p.readInt();
+        notification.number = p.readString();
+        notification.alphaid = p.readString();
+        notification.cli_validity = p.readInt();
+
+        return notification;
+    }
+
+    /*
+     * to protect modem status we need to avoid two case :
+     * 1. DTMF start -> CHLD request -> DTMF stop
+     * 2. CHLD request -> DTMF request
+     */
+    private void handleChldRelatedRequest(RILRequest rr) {
+        synchronized (mDtmfReqQueue) {
+            int queueSize = mDtmfReqQueue.size();
+            int i, j;
+            if (queueSize > 0) {
+                RILRequest rr2 = mDtmfReqQueue.get();
+                if (rr2.mRequest == RIL_REQUEST_DTMF_START) {
+                    // need to send the STOP command
+                    if (RILJ_LOGD) riljLog("DTMF queue isn't 0, first request is START, send stop dtmf and pending switch");
+                    if (queueSize > 1) {
+                        j = 2;
+                    } else {
+                        // need to create a new STOP command
+                        j = 1;
+                    }
+                    if (RILJ_LOGD) riljLog("queue size  " + mDtmfReqQueue.size());
+
+                    for (i = queueSize - 1; i >= j; i--) {
+                        mDtmfReqQueue.remove(i);
+                    }
+                    if (RILJ_LOGD) riljLog("queue size  after " + mDtmfReqQueue.size());
+                    if (mDtmfReqQueue.size() == 1) { // only start command, we need to add stop command
+                        RILRequest rr3 = RILRequest.obtain(RIL_REQUEST_DTMF_STOP, null);
+                        if (RILJ_LOGD) riljLog("add dummy stop dtmf request");
+                        mDtmfReqQueue.stop();
+                        mDtmfReqQueue.add(rr3);
+                    }
+                }
+                else {
+                    // first request is STOP, just remove it and send switch
+                    if (RILJ_LOGD) riljLog("DTMF queue isn't 0, first request is STOP, penging switch");
+                    j = 1;
+                    for (i = queueSize - 1; i >= j; i--) {
+                        mDtmfReqQueue.remove(i);
+                    }
+                }
+                mDtmfReqQueue.setPendingRequest(rr);
+            } else {
+                if (RILJ_LOGD) riljLog("DTMF queue is 0, send switch Immediately");
+                mDtmfReqQueue.setSendChldRequest();
+                send(rr);
+            }
+        }
+    }
+
+    public void
+    hangupAll(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_HANGUP_ALL,
+                                        result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void forceReleaseCall(int index, Message result) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_FORCE_RELEASE_CALL, result);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(index);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + " " + index);
+
+        send(rr);
+    }
+
+    public void setCallIndication(int mode, int callId, int seqNumber, Message result) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SET_CALL_INDICATION, result);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeInt(mode);
+        rr.mParcel.writeInt(callId);
+        rr.mParcel.writeInt(seqNumber);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + " " + mode + ", " + callId + ", " + seqNumber);
+
+        send(rr);
+    }
+
+    public void
+    emergencyDial(String address, int clirMode, UUSInfo uusInfo, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_EMERGENCY_DIAL, result);
+
+        rr.mParcel.writeString(address);
+        rr.mParcel.writeInt(clirMode);
+        rr.mParcel.writeInt(0); // UUS information is absent
+
+        if (uusInfo == null) {
+            rr.mParcel.writeInt(0); // UUS information is absent
+        } else {
+            rr.mParcel.writeInt(1); // UUS information is present
+            rr.mParcel.writeInt(uusInfo.getType());
+            rr.mParcel.writeInt(uusInfo.getDcs());
+            rr.mParcel.writeByteArray(uusInfo.getUserData());
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void setEccServiceCategory(int serviceCategory) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ECC_SERVICE_CATEGORY, null);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(serviceCategory);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+            + " " + serviceCategory);
+
+        send(rr);
+    }
+
+    private void setEccList() {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ECC_LIST, null);
+        ArrayList<PhoneNumberUtils.EccEntry> eccList = PhoneNumberUtils.getEccList();
+
+        rr.mParcel.writeInt(eccList.size() * 3);
+        for (PhoneNumberUtils.EccEntry entry : eccList) {
+            rr.mParcel.writeString(entry.getEcc());
+            rr.mParcel.writeString(entry.getCategory());
+            String strCondition = entry.getCondition();
+            if (strCondition.equals(PhoneNumberUtils.EccEntry.ECC_FOR_MMI))
+                strCondition = PhoneNumberUtils.EccEntry.ECC_NO_SIM;
+            rr.mParcel.writeString(strCondition);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void setSpeechCodecInfo(boolean enable, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SPEECH_CODEC_INFO,
+                response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(enable ? 1 : 0);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+            + " " + enable);
+        send(rr);
+    }
+    /* M: call control part end */
+
+    /// M: IMS feature. @{
+    public void addConferenceMember(int confCallId, String address, int callIdToAdd, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ADD_IMS_CONFERENCE_CALL_MEMBER, response);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(Integer.toString(confCallId));
+        rr.mParcel.writeString(address);
+        rr.mParcel.writeString(Integer.toString(callIdToAdd));
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void removeConferenceMember(int confCallId, String address, int callIdToRemove, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_REMOVE_IMS_CONFERENCE_CALL_MEMBER, response);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(Integer.toString(confCallId));
+        rr.mParcel.writeString(address);
+        rr.mParcel.writeString(Integer.toString(callIdToRemove));
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void retrieveHeldCall(int callIdToRetrieve, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_RETRIEVE_HELD_CALL, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(callIdToRetrieve);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+    /// @}
+
+    /* M: SS part */
+    public void
+    changeBarringPassword(String facility, String oldPwd, String newPwd,
+        String newCfm, Message result) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_CHANGE_BARRING_PASSWORD, result, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_CHANGE_BARRING_PASSWORD, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        rr.mParcel.writeInt(4);
+        rr.mParcel.writeString(facility);
+        rr.mParcel.writeString(oldPwd);
+        rr.mParcel.writeString(newPwd);
+        rr.mParcel.writeString(newCfm);
+        send(rr);
+    }
+
+    public void setCLIP(boolean enable, Message result) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_CLIP, result, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_CLIP, result);
+
+        // count ints
+        rr.mParcel.writeInt(1);
+
+        if (enable) {
+            rr.mParcel.writeInt(1);
+        } else {
+            rr.mParcel.writeInt(0);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " " + enable);
+
+        send(rr);
+    }
+    /* M: SS part end */
+
+    /* M: Network part start */
+    private String lookupOperatorNameFromNetwork(int subId, String numeric, boolean desireLongName) {
+        String nitzOperatorNumeric = null;
+        String nitzOperatorName = null;
+
+        nitzOperatorNumeric = TelephonyManager.getTelephonyProperty(TelephonyProperties.PROPERTY_NITZ_OPER_CODE, subId, "");
+        if ((numeric != null) && (numeric.equals(nitzOperatorNumeric))) {
+            if (desireLongName == true) {
+                nitzOperatorName = TelephonyManager.getTelephonyProperty(TelephonyProperties.PROPERTY_NITZ_OPER_LNAME, subId, "");
+            } else {
+                nitzOperatorName = TelephonyManager.getTelephonyProperty(TelephonyProperties.PROPERTY_NITZ_OPER_SNAME, subId, "");
+            }
+        }
+
+        /* ALPS00273663 handle UCS2 format name : prefix + hex string ex: "uCs2806F767C79D1" */
+        if ((nitzOperatorName != null) && (nitzOperatorName.startsWith("uCs2") == true))
+        {
+            riljLog("lookupOperatorNameFromNetwork handling UCS2 format name");
+            try {
+                nitzOperatorName = new String(IccUtils.hexStringToBytes(nitzOperatorName.substring(4)), "UTF-16");
+            } catch (UnsupportedEncodingException ex) {
+                riljLog("lookupOperatorNameFromNetwork UnsupportedEncodingException");
+            }
+        }
+
+        riljLog("lookupOperatorNameFromNetwork numeric= " + numeric + ",subId= " + subId + ",nitzOperatorNumeric= " + nitzOperatorNumeric + ",nitzOperatorName= " + nitzOperatorName);
+
+        return nitzOperatorName;
+    }
+
+    private Object
+    responseOperator(Parcel p) {
+        int num;
+        String response[] = null;
+        String longName = null;
+        String shortName = null;
+
+        response = p.readStringArray();
+
+        if (false) {
+            num = p.readInt();
+
+            response = new String[num];
+            for (int i = 0; i < num; i++) {
+                response[i] = p.readString();
+            }
+        }
+
+        if (response.length > 2 && response[2] != null) {
+            /* Default display manufacturer maintained operator name table */
+            response[0] = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), response[2], true, mContext);
+            response[1] = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), response[2], false, mContext);
+            riljLog("lookup RIL responseOperator(), longAlpha= " + response[0] + ",shortAlpha= " + response[1] + ",numeric=" + response[2]);
+
+            /* Operator name from network MM information has higher priority to display */
+            longName = lookupOperatorNameFromNetwork(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), response[2], true);
+            shortName = lookupOperatorNameFromNetwork(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), response[2], false);
+            if (longName != null) {
+                response[0] = longName;
+            }
+            if (shortName != null) {
+                response[1] = shortName;
+            }
+            riljLog("lookupOperatorNameFromNetwork in responseOperator(),updated longAlpha= " + response[0] + ",shortAlpha= " + response[1] + ",numeric=" + response[2]);
+
+            /* Operator name from SIM (EONS/CPHS) has highest priority to display. This will be handled in GsmSST updateSpnDisplay() */
+        }
+
+        return response;
+    }
+
+    @Override
+    public void
+    setNetworkSelectionModeManualWithAct(String operatorNumeric, String act, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL_WITH_ACT,
+                                    response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " " + operatorNumeric + "" + act);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeString(act);
+        rr.mParcel.writeString("0"); //the 3rd parameter is for MTK RIL to identify it shall be processed as semi auto network selection mode or not
+
+        send(rr);
+    }
+
+    private Object
+    responseNetworkInfoWithActs(Parcel p) {
+        String strings[] = (String []) responseStrings(p);
+        ArrayList<NetworkInfoWithAcT> ret;
+
+        if (strings.length % 4 != 0) {
+            throw new RuntimeException(
+                "RIL_REQUEST_GET_POL_LIST: invalid response. Got "
+                + strings.length + " strings, expected multible of 5");
+        }
+
+        ret = new ArrayList<NetworkInfoWithAcT>(strings.length / 4);
+
+        String strOperName = null;
+        String strOperNumeric = null;
+        int nAct = 0;
+        int nIndex = 0;
+
+        for (int i = 0 ; i < strings.length ; i += 4) {
+            strOperName = null;
+            strOperNumeric = null;
+            if (strings[i] != null) {
+                nIndex = Integer.parseInt(strings[i]);
+            } else {
+                Rlog.d(RILJ_LOG_TAG, "responseNetworkInfoWithActs: no invalid index. i is " + i);
+            }
+
+            if (strings[i + 1] != null) {
+                int format = Integer.parseInt(strings[i + 1]);
+                switch (format) {
+                    case 0:
+                    case 1:
+                        strOperName = strings[i + 2];
+                        break;
+                    case 2:
+                        if (strings[i + 2] != null) {
+                            strOperNumeric = strings[i + 2];
+                            strOperName = SpnOverride.getInstance().lookupOperatorName(SubscriptionManager.getSubIdUsingPhoneId(mInstanceId), strings[i + 2], true, mContext);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            if (strings[i + 3] != null) {
+                nAct = Integer.parseInt(strings[i + 3]);
+            } else {
+                Rlog.d(RILJ_LOG_TAG, "responseNetworkInfoWithActs: no invalid Act. i is " + i);
+            }
+            if (strOperNumeric != null && !strOperNumeric.equals("?????")) {
+                ret.add(
+                    new NetworkInfoWithAcT(
+                        strOperName,
+                        strOperNumeric,
+                        nAct,
+                        nIndex));
+            } else {
+                Rlog.d(RILJ_LOG_TAG, "responseNetworkInfoWithActs: invalid oper. i is " + i);
+            }
+        }
+
+        return ret;
+    }
+
+    public void
+    setNetworkSelectionModeSemiAutomatic(String operatorNumeric, String act, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL_WITH_ACT,
+                                    response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " " + operatorNumeric + "" + act);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeString(act);
+        rr.mParcel.writeString("1"); //the 3rd parameter is for MTK RIL to identify it shall be processed as semi auto network selection mode
+
+        send(rr);
+    }
+
+    public void getPOLCapabilty(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_POL_CAPABILITY, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void getCurrentPOLList(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_POL_LIST, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void setPOLEntry(int index, String numeric, int nAct, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_POL_ENTRY, response);
+        if (numeric == null || (numeric.length() == 0)) {
+            rr.mParcel.writeInt(1);
+            rr.mParcel.writeString(Integer.toString(index));
+        } else {
+            rr.mParcel.writeInt(3);
+            rr.mParcel.writeString(Integer.toString(index));
+            rr.mParcel.writeString(numeric);
+            rr.mParcel.writeString(Integer.toString(nAct));
+        }
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    // Femtocell (CSG) feature START
+    public void getFemtoCellList(String operatorNumeric, int rat, Message response) {
+        RILRequest rr
+        = RILRequest.obtain(RIL_REQUEST_GET_FEMTOCELL_LIST,
+                                    response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeString(Integer.toString(rat));
+        send(rr);
+    }
+
+    public void abortFemtoCellList(Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ABORT_FEMTOCELL_LIST, response);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void selectFemtoCell(FemtoCellInfo femtocell, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SELECT_FEMTOCELL,
+                                    response);
+        int act = femtocell.getCsgRat();
+
+        if (act == ServiceState.RIL_RADIO_TECHNOLOGY_LTE) {
+            act = 7;
+        } else if (act == ServiceState.RIL_RADIO_TECHNOLOGY_UMTS) {
+            act = 2;
+        } else {
+            act = 0;
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " csgId=" + femtocell.getCsgId() + " plmn=" + femtocell.getOperatorNumeric() + " rat=" + femtocell.getCsgRat() + " act=" + act);
+
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(femtocell.getOperatorNumeric());
+        rr.mParcel.writeString(Integer.toString(act));
+        rr.mParcel.writeString(Integer.toString(femtocell.getCsgId()));
+
+        send(rr);
+    }
+    // Femtocell (CSG) feature END
+
+    // M: CC33 LTE.
+    @Override
+    public void
+    setDataOnToMD(boolean enable, Message result) {
+        //AT+EDSS = <on/off>
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_DATA_ON_TO_MD, result);
+        int type = enable ? 1 : 0;
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(type);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> "
+                                + requestToString(rr.mRequest) + ": " + type);
+        send(rr);
+    }
+
+    @Override
+    public void
+    setRemoveRestrictEutranMode(boolean enable, Message result) {
+        //AT+ECODE33 = <on/off>
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_REMOVE_RESTRICT_EUTRAN_MODE, result);
+        int type = enable ? 1 : 0;
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(type);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> "
+                                + requestToString(rr.mRequest) + ": " + type);
+        send(rr);
+    }
+
+    public boolean isGettingAvailableNetworks() {
+        synchronized (mRequestList) {
+            for (int i = 0, s = mRequestList.size() ; i < s ; i++) {
+                RILRequest rr = mRequestList.valueAt(i);
+                if (rr != null &&
+                    (rr.mRequest == RIL_REQUEST_QUERY_AVAILABLE_NETWORKS ||
+                     rr.mRequest == RIL_REQUEST_QUERY_AVAILABLE_NETWORKS_WITH_ACT)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /* M: Network part end */
+    // IMS
+    public void setIMSEnabled(boolean enable, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_IMS_ENABLE, response);
+
+        rr.mParcel.writeInt(1);
+        if (enable) {
+            rr.mParcel.writeInt(1);
+        } else {
+            rr.mParcel.writeInt(0);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+    // VOLTE
+    public void setupDedicateDataCall(int ddcId, int interfaceId, boolean signalingFlag, QosStatus qosStatus, TftStatus tftStatus, Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_SETUP_DEDICATE_DATA_CALL, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SETUP_DEDICATE_DATA_CALL, response);
+
+        rr.mParcel.writeInt(7);
+        rr.mParcel.writeInt(ddcId);
+        rr.mParcel.writeInt(interfaceId);
+        rr.mParcel.writeInt(signalingFlag ? 1 : 0);
+        if (qosStatus == null) {
+            rr.mParcel.writeInt(0);
+        } else {
+            rr.mParcel.writeInt(1);
+            qosStatus.writeTo(rr.mParcel);
+        }
+
+        if (tftStatus == null) {
+            rr.mParcel.writeInt(0);
+        } else {
+            rr.mParcel.writeInt(1);
+            tftStatus.writeTo(rr.mParcel);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> "
+                + requestToString(rr.mRequest) + " interfaceId=" + interfaceId + " signalingFlag="
+                + signalingFlag);
+
+        send(rr);
+    }
+
+    public void deactivateDedicateDataCall(int cid, String reason, Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_DEACTIVATE_DEDICATE_DATA_CALL, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_DEACTIVATE_DEDICATE_DATA_CALL, response);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(Integer.toString(cid));
+        rr.mParcel.writeString(reason);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " +
+                requestToString(rr.mRequest) + " " + cid + " " + reason);
+
+        send(rr);
+    }
+
+    public void modifyDataCall(int cid, QosStatus qosStatus, TftStatus tftStatus, Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_MODIFY_DATA_CALL, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_MODIFY_DATA_CALL, response);
+        rr.mParcel.writeInt(7);
+        rr.mParcel.writeInt(cid);
+        if (qosStatus == null) {
+            rr.mParcel.writeInt(0);
+        } else {
+            rr.mParcel.writeInt(1);
+            qosStatus.writeTo(rr.mParcel);
+        }
+
+        if (tftStatus == null) {
+            rr.mParcel.writeInt(0);
+        } else {
+            rr.mParcel.writeInt(1);
+            tftStatus.writeTo(rr.mParcel);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    public void abortSetupDataCall(int ddcId, String reason, Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_ABORT_SETUP_DATA_CALL, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ABORT_SETUP_DATA_CALL, response);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(Integer.toString(ddcId));
+        rr.mParcel.writeString(reason);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " + ddcId + " " + reason);
+        send(rr);
+    }
+
+    public void pcscfDiscoveryPco(int cid, Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_PCSCF_DISCOVERY_PCO, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_PCSCF_DISCOVERY_PCO, response);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(cid);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    private Object responseSetupDedicateDataCall(Parcel p) {
+        int number = p.readInt();
+        if (RILJ_LOGD) riljLog("responseSetupDedicateDataCall number=" + number);
+        DedicateDataCallState[] dedicateDataCalls = new DedicateDataCallState[number];
+        for (int i=0; i<number; i++) {
+            DedicateDataCallState dedicateDataCall = new DedicateDataCallState();
+            dedicateDataCall.readFrom(p);
+            dedicateDataCalls[i] = dedicateDataCall;
+
+            riljLog("[" + dedicateDataCall.interfaceId + ", " + dedicateDataCall.defaultCid + ", " + dedicateDataCall.cid + ", " + dedicateDataCall.active +
+                ", " + dedicateDataCall.signalingFlag + ", " + dedicateDataCall.failCause + ", Qos" + dedicateDataCall.qosStatus +
+                ", Tft" + dedicateDataCall.tftStatus + ", PCSCF" + dedicateDataCall.pcscfInfo);
+        }
+
+        if (number > 1)
+            return dedicateDataCalls;
+        else if (number > 0)
+            return dedicateDataCalls[0];
+        else
+            return null;
+    }
+
+    private Object responseModifyDataCall(Parcel p) {
+        return null;
+    }
+
+    private Object responsePcscfDiscovery(Parcel p) {
+        PcscfInfo pcscfInfo = null;
+        String pcscfStr = p.readString();
+        if (!TextUtils.isEmpty(pcscfStr)) {
+            String[] pcscfArray = pcscfStr.split(" ");
+            if (pcscfArray != null && pcscfArray.length > 0)
+                pcscfInfo = new PcscfInfo(PcscfInfo.IMC_PCSCF_ACQUIRE_BY_PCO, pcscfArray);
+        }
+        return pcscfInfo;
+    }
+
+    public void clearDataBearer(Message response) {
+        //RILRequest rr = RILRequest.obtain(RIL_REQUEST_CLEAR_DATA_BEARER, response, mySimId);
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_CLEAR_DATA_BEARER, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    // M: Fast Dormancy
+    public void setScri(boolean forceRelease, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SCRI, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(forceRelease ? 1 : 0);
+
+        send(rr);
+
+    }
+
+    //[New R8 modem FD]
+    public void setFDMode(int mode, int parameter1, int parameter2, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_FD_MODE, response);
+
+        //AT+EFD=<mode>[,<param1>[,<param2>]]
+        //mode=0:disable modem Fast Dormancy; mode=1:enable modem Fast Dormancy
+        //mode=3:inform modem the screen status; parameter1: screen on or off
+        //mode=2:Fast Dormancy inactivity timer; parameter1:timer_id; parameter2:timer_value
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        if (mode == 0 || mode == 1) {
+            rr.mParcel.writeInt(1);
+            rr.mParcel.writeInt(mode);
+        } else if (mode == 3) {
+            rr.mParcel.writeInt(2);
+            rr.mParcel.writeInt(mode);
+            rr.mParcel.writeInt(parameter1);
+        } else if (mode == 2) {
+            rr.mParcel.writeInt(3);
+            rr.mParcel.writeInt(mode);
+            rr.mParcel.writeInt(parameter1);
+            rr.mParcel.writeInt(parameter2);
+        }
+
+        send(rr);
+
+    }
+
+    // @argument:
+    // enable: yes   -> data centric
+    //         false -> voice centric
+    public void setDataCentric(boolean enable, Message response) {
+    	if (RILJ_LOGD) riljLog("setDataCentric");
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_DATA_CENTRIC, response);
+
+        rr.mParcel.writeInt(1);
+        if(enable) {
+            rr.mParcel.writeInt(1);
+        } else {
+            rr.mParcel.writeInt(0);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    
+    /* M: call control part start */
+    /**
+     * Notify modem about IMS call status.
+     * @param existed True if there is at least one IMS call existed, else return false.
+     * @param response User-defined message code.
+     */
+    @Override
+    public void setImsCallStatus (boolean existed, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_IMS_CALL_STATUS, null);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(existed ? 1 : 0);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+        send(rr);
+    }
+    /* M: call control part end */
+    
+
+    /* M: C2K part start */
+    @Override
+    public void setViaTRM(int mode, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_VIA_TRM, null);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(mode);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+        send(rr);
+    }
+
+    @Override
+    public void getNitzTime(Message result) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_GET_NITZ_TIME, result);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void requestSwitchHPF(boolean enableHPF, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SWITCH_HPF, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " + enableHPF);
+        }
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(enableHPF ? 1 : 0);
+
+        send(rr);
+    }
+
+    @Override
+    public void setAvoidSYS(boolean avoidSYS, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SET_AVOID_SYS, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " + avoidSYS);
+        }
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(avoidSYS ? 1 : 0);
+
+        send(rr);
+    }
+
+    @Override
+    public void getAvoidSYSList(Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_QUERY_AVOID_SYS, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void queryCDMANetworkInfo(Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_QUERY_CDMA_NETWORK_INFO, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void requestAGPSTcpConnected(int connected, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_AGPS_TCP_CONNIND, result);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(connected);
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + connected);
+        }
+        send(rr);
+    }
+
+    @Override
+    public void requestAGPSSetMpcIpPort(String ip, String port, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_AGPS_SET_MPC_IPPORT, result);
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(ip);
+        rr.mParcel.writeString(port);
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " : " + ip + ", " + port);
+        }
+        send(rr);
+    }
+
+    @Override
+    public void requestAGPSGetMpcIpPort(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_AGPS_GET_MPC_IPPORT, result);
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+        send(rr);
+    }
+
+    @Override
+    public void requestSetEtsDev(int dev, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ETS_DEV, result);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(dev);
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + dev);
+        }
+        send(rr);
+    }
+
+    @Override
+    public void setArsiReportThreshold(int threshold, Message response) {
+        RILRequest rr = RILRequest.obtain(
+                RILConstants.RIL_REQUEST_SET_ARSI_THRESHOLD, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(threshold);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " : " + threshold);
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void resumeCdmaRegister(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_REG_RESUME, result);
+
+        mVoiceNetworkStateRegistrants.notifyRegistrants(new AsyncResult (null, null, null));
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void enableCdmaRegisterPause(boolean enable, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENABLE_REG_PAUSE, result);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(enable ? 1 : 0);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " enable : " + enable);
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void queryCDMASmsAndPBStatus(Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_QUERY_SMS_AND_PHONEBOOK_STATUS, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void queryCDMANetWorkRegistrationState(Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_QUERY_NETWORK_REGISTRATION, response);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        }
+
+        send(rr);
+    }
+
+    @Override
+    public void setMeid(String meid, Message response) {
+        RILRequest rr
+               = RILRequest.obtain(RIL_REQUEST_SET_MEID, response);
+
+       rr.mParcel.writeString(meid);
+       if (RILJ_LOGD) {
+           riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + meid);
+       }
+
+       send(rr);
+   }
+
+    @Override
+    public void setMdnNumber(String mdn, Message response) {
+         RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_WRITE_MDN, response);
+
+        rr.mParcel.writeString(mdn);
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " + mdn);
+        }
+
+        send(rr);
+    }
+
+    private Object responseGetNitzTime(Parcel p) {
+        Object[] result = new Object[2];
+        String response;
+
+        response = p.readString();
+        long nitzReceiveTime = p.readLong();
+        result[0] = response;
+        result[1] = Long.valueOf(nitzReceiveTime);
+
+        return result;
+    }
+    
+    //UTK started
+    public void getUtkLocalInfo(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_LOCAL_INFO, result);
+        
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+    
+    public void requestUtkRefresh(int refreshType, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_UTK_REFRESH, result);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(refreshType);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void reportUtkServiceIsRunning(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_REPORT_STK_SERVICE_IS_RUNNING, result);
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    public void profileDownload(String profile, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_STK_SET_PROFILE, response);
+
+        rr.mParcel.writeString(profile);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }    
+
+    public void handleCallSetupRequestFromUim(boolean accept, Message response) {
+        RILRequest rr = RILRequest.obtain(
+            RILConstants.RIL_REQUEST_STK_HANDLE_CALL_SETUP_REQUESTED_FROM_SIM,
+            response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(accept ? 1 : 0);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + " " + (accept ? 1 : 0));
+        
+        send(rr);
+    }
+    //UTK end    
+    
+    /* M: C2K part end */
 }

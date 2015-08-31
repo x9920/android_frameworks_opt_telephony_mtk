@@ -64,4 +64,10 @@ public interface MmiCode
      * @return true if an outstanding request can be canceled.
      */
     public boolean isCancelable();
+
+    //For ALPS01471897
+    /**
+     * @return true if it is user initiated
+     */
+    public boolean getUserInitiatedMMI();
 }

@@ -38,12 +38,24 @@ public final class SIMFileHandler extends IccFileHandler implements IccConstants
 
     @Override
     protected String getEFPath(int efid) {
+        return getEFPath(efid, false);
+    }
+    protected String getEFPath(int efid, boolean is7FFF) {
         // TODO(): DF_GSM can be 7F20 or 7F21 to handle backward compatibility.
         // Implement this after discussion with OEMs.
+        String DF_APP = DF_GSM;
+
+        if ((mParentApp != null) && (mParentApp.getType() == IccCardApplicationStatus.AppType.APPTYPE_USIM)) {
+            DF_APP = DF_USIM;
+        }
+
         switch(efid) {
         case EF_SMS:
+        case EF_SMSP:   // [ALPS01206315] Support EF_SMSP
             return MF_SIM + DF_TELECOM;
 
+        case EF_ICCID:
+            return null;
         case EF_EXT6:
         case EF_MWIS:
         case EF_MBI:
@@ -64,8 +76,15 @@ public final class SIMFileHandler extends IccFileHandler implements IccConstants
         case EF_SPN_SHORT_CPHS:
         case EF_INFO_CPHS:
         case EF_CSP_CPHS:
-        case EF_PLMNWACT:
             return MF_SIM + DF_GSM;
+        case EF_GID2:
+        case EF_ECC:
+        case EF_OPL:
+            return /*MF_SIM +*/ DF_APP;
+        case EF_RAT: // ALPS00302702 RAT balancing (ADF(USIM)/7F66/5F30/EF_RAT)
+            return DF_USIM + "7F66" + "5F30";
+        case EF_CSIM_IMSIM:
+            return MF_SIM + DF_CDMA;
         }
         String path = getCommonIccEFPath(efid);
         if (path == null) {

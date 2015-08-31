@@ -31,6 +31,7 @@ import android.text.TextUtils;
 
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
+import android.telephony.SubscriptionManager;
 
 import com.android.internal.telephony.uicc.UiccCardApplication;
 import com.android.internal.telephony.uicc.UiccController;
@@ -68,6 +69,12 @@ public class CdmaConnection extends Connection {
     Handler mHandler;
 
     private PowerManager.WakeLock mPartialWakeLock;
+
+    /// M: @{
+    boolean mIsVideo;    // for video call
+    boolean mIsRealConnected; // indicate if the MO call has been accepted by remote side
+    long mRealAcceptTime;    // real accept time
+    /// @}
 
     //***** Event Constants
     static final int EVENT_DTMF_DONE = 1;
@@ -124,6 +131,10 @@ public class CdmaConnection extends Connection {
 
         mParent = parentFromDCState (dc.state);
         mParent.attach(this, dc);
+
+        /// M: @{
+        mRealAcceptTime = 0;
+        /// @}
     }
 
     /** This is an MO call/three way call, created when dialing */
@@ -161,6 +172,11 @@ public class CdmaConnection extends Connection {
                 parent.attachFake(this, CdmaCall.State.DIALING);
             }
         }
+
+        /// M: @{
+        mIsRealConnected = false; // indicated if remote side has answered the MO call(CTA case)
+        mRealAcceptTime = 0;
+        /// @}
     }
 
     /** This is a Call waiting call*/
@@ -181,6 +197,11 @@ public class CdmaConnection extends Connection {
         mConnectTime = 0;
         mParent = parent;
         parent.attachFake(this, CdmaCall.State.WAITING);
+
+        /// M: @{
+        Rlog.d(LOG_TAG, "Create for call waiting, mAddress = " + mAddress);
+        mRealAcceptTime = 0;
+        /// @}
     }
 
     public void dispose() {
@@ -346,12 +367,6 @@ public class CdmaConnection extends Connection {
                 return DisconnectCause.CALL_BARRED;
             case CallFailCause.FDN_BLOCKED:
                 return DisconnectCause.FDN_BLOCKED;
-            case CallFailCause.DIAL_MODIFIED_TO_USSD:
-                return DisconnectCause.DIAL_MODIFIED_TO_USSD;
-            case CallFailCause.DIAL_MODIFIED_TO_SS:
-                return DisconnectCause.DIAL_MODIFIED_TO_SS;
-            case CallFailCause.DIAL_MODIFIED_TO_DIAL:
-                return DisconnectCause.DIAL_MODIFIED_TO_DIAL;
             case CallFailCause.CDMA_LOCKED_UNTIL_POWER_CYCLE:
                 return DisconnectCause.CDMA_LOCKED_UNTIL_POWER_CYCLE;
             case CallFailCause.CDMA_DROP:
@@ -372,19 +387,27 @@ public class CdmaConnection extends Connection {
                 return DisconnectCause.CDMA_NOT_EMERGENCY;
             case CallFailCause.CDMA_ACCESS_BLOCKED:
                 return DisconnectCause.CDMA_ACCESS_BLOCKED;
-            case CallFailCause.EMERGENCY_TEMP_FAILURE:
-                return DisconnectCause.EMERGENCY_TEMP_FAILURE;
-            case CallFailCause.EMERGENCY_PERM_FAILURE:
-                return DisconnectCause.EMERGENCY_PERM_FAILURE;
             case CallFailCause.ERROR_UNSPECIFIED:
             case CallFailCause.NORMAL_CLEARING:
             default:
                 CDMAPhone phone = mOwner.mPhone;
                 int serviceState = phone.getServiceState().getState();
-                UiccCardApplication app = UiccController
+                /// M: @{
+                AppState uiccAppState = AppState.APPSTATE_UNKNOWN;
+                if (UiccController.getInstance() != null) {
+                    log("UiccController.getInstance() != null");
+                    int slotId = SubscriptionManager.getSlotId(phone.getSubId());
+                    UiccCardApplication tempApplication = UiccController
                         .getInstance()
-                        .getUiccCardApplication(phone.getPhoneId(), UiccController.APP_FAM_3GPP2);
-                AppState uiccAppState = (app != null) ? app.getState() : AppState.APPSTATE_UNKNOWN;
+                        .getUiccCardApplication(slotId, UiccController.APP_FAM_3GPP2);
+                    if (tempApplication != null) {
+                        log("tempApplication != null");
+                        uiccAppState = tempApplication.getState();
+                    }
+                } else {
+                    log("UiccController.getInstance() is null");
+                }
+                /// @}
                 if (serviceState == ServiceState.STATE_POWER_OFF) {
                     return DisconnectCause.POWER_OFF;
                 } else if (serviceState == ServiceState.STATE_OUT_OF_SERVICE
@@ -462,8 +485,19 @@ public class CdmaConnection extends Connection {
         if (!equalsHandlesNulls(mAddress, dc.number) && (!mNumberConverted
                 || !equalsHandlesNulls(mConvertedNumber, dc.number)))  {
             if (Phone.DEBUG_PHONE) log("update: phone # changed!");
-            mAddress = dc.number;
-            changed = true;
+            /// M: @{
+            // for pluscode transfer
+            String number = dc.number;
+            if (mAddress != null && mAddress.length() > 0
+                && mAddress.startsWith("+") && !number.startsWith("+")) {
+                // do not update number according because pluscode transfer
+                log("update: do not update number according because pluscode transfer!");
+            } else {
+                log("update: update number because number changed by network!");
+                mAddress = dc.number;
+                changed = true;
+            }
+            /// @}
         }
 
         // A null cnapName should be the same as ""
@@ -559,7 +593,10 @@ public class CdmaConnection extends Connection {
 
         if (!mIsIncoming) {
             // outgoing calls only
-            processNextPostDialChar();
+            /// M: @{
+            // send DTMF when the CDMAcall is really accepted. 
+            //processNextPostDialChar();
+            /// @}
         } else {
             // Only release wake lock for incoming calls, for outgoing calls the wake lock
             // will be released after any pause-dial is completed
@@ -693,9 +730,6 @@ public class CdmaConnection extends Connection {
             }
         }
 
-        notifyPostDialListenersNextChar(c);
-
-        // TODO: remove the following code since the handler no longer executes anything.
         postDialHandler = mOwner.mPhone.mPostDialHandler;
 
         Message notifyMessage;
@@ -939,4 +973,66 @@ public class CdmaConnection extends Connection {
     public boolean isMultiparty() {
         return false;
     }
+
+    /// M: @{
+    public void hangup(int discRingingConnCause) throws CallStateException {
+        if (!mDisconnected) {
+            mOwner.hangup(this);
+            /* Only for RingingCall's connection to provide this interface */
+            if (mParent == mOwner.mRingingCall && mOwner.mRingingCall.hasConnection(this)) {
+                mCause = discRingingConnCause;
+                log("hangup RingingConn with cause = " + discRingingConnCause
+                    + ", and ringCall state = " + mParent.mState);
+                if (mParent.mState == Call.State.INCOMING || mParent.mState == Call.State.WAITING) {
+                    mParent.mState = Call.State.DISCONNECTING;
+                }
+            }
+        } else {
+            throw new CallStateException ("disconnected");
+        }
+    }
+
+    public boolean isVideo() {
+        return mIsVideo;
+    }
+
+    public boolean isRealConnected() {
+        return mIsRealConnected;
+    }
+
+    // register CDMA call accepted message
+    void onCDMACallAccept() {
+        mConnectTimeReal = SystemClock.elapsedRealtime();
+        mDuration = 0;
+        mConnectTime = System.currentTimeMillis();
+        mIsRealConnected = true;
+        Rlog.d(LOG_TAG, "onCDMACallAccept");
+        // send DTMF when the CDMAcall is really accepted. 
+        processNextPostDialChar();
+    }
+
+    // get and set real accept time
+    public void setRealAcceptTime(long time) {
+        mRealAcceptTime = time;
+    }
+
+    public long getRealAcceptTime() {
+        return mRealAcceptTime;
+    }
+
+    /*package*/ boolean
+    onDisconnectByMom(int cause) {
+        boolean changed = false;
+        mCause = cause;
+        if (!mDisconnected) {
+            doDisconnect();
+            if (VDBG) { Rlog.d(LOG_TAG, "onDisconnectByMom: cause=" + cause); }
+            if (mParent != null) {
+                changed = mParent.connectionDisconnected(this);
+            }
+        }
+        releaseWakeLock();
+        return changed;
+    }
+    /// @}
 }

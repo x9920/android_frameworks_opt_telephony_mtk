@@ -51,6 +51,11 @@ public class DriverCall implements Comparable<DriverCall> {
     public int namePresentation;
     public UUSInfo uusInfo;
 
+    /// M: Add for IMS conference call. @{
+    public int     callMode;
+    public String  pau;
+    /// @}
+
     /** returns null on error */
     static DriverCall
     fromCLCCLine(String line) {
@@ -113,7 +118,8 @@ public class DriverCall implements Comparable<DriverCall> {
                 + (isVoice ? "voc" : "nonvoc") + ","
                 + (isVoicePrivacy ? "evp" : "noevp") + ","
                 /*+ "number=" + number */ + ",cli=" + numberPresentation + ","
-                /*+ "name="+ name */ + "," + namePresentation;
+                /*+ "name="+ name */ + namePresentation + ","
+                + callMode;
     }
 
     public static State

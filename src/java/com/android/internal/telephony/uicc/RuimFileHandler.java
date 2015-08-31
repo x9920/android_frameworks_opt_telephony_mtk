@@ -55,28 +55,36 @@ public final class RuimFileHandler extends IccFileHandler {
 
     @Override
     protected String getEFPath(int efid) {
+        logd("getEFPath " + efid);
+        String path;
+        
         switch(efid) {
         case EF_SMS:
         case EF_CST:
         case EF_RUIM_SPN:
-        case EF_RUIM_ID:
         case EF_CSIM_LI:
         case EF_CSIM_MDN:
         case EF_CSIM_IMSIM:
         case EF_CSIM_CDMAHOME:
         case EF_CSIM_EPRL:
-        case EF_CSIM_MODEL:
-        case EF_MODEL:
-        case EF_CSIM_PRL:
-        case EF_CSIM_MIPUPP:
-            return MF_SIM + DF_CDMA;
-        case EF_CSIM_MSPL:
-        case EF_CSIM_MLPL:
-            return MF_SIM + DF_TELECOM + DF_MMSS;
+            path = MF_SIM + DF_CDMA;
+            break;
+        case EF_ICCID:
+            path = MF_SIM;
+            break;
+        default:
+            path = getCommonIccEFPath(efid);
+            break;
         }
-        return getCommonIccEFPath(efid);
+        logd("path " + path);        
+        return path;
     }
 
+    protected String getEFPath(int efid, boolean is7FFF) {
+        logd("[RuimFH]GetEFPath : efid = " + efid + ", is7FFF = " + is7FFF);
+        return getEFPath(efid);
+    }
+    
     @Override
     protected void logd(String msg) {
         Rlog.d(LOG_TAG, "[RuimFileHandler] " + msg);
