@@ -1776,5 +1776,23 @@ public final class SimulatedCommands extends BaseCommands
         setRadioState(RadioState.RADIO_UNAVAILABLE);
     }
 
+    // MTK additions
+
+    @Override
+    public void setTrm(int mode, Message result) {
+    }
+
+    @Override
+    public void setResumeRegistration(int sessionId, Message response) {
+    }
+
+    @Override
+    public void queryModemType(Message response) {
+    }
+
+    @Override
+    public void storeModemType(int modemType, Message response) {
+    }
+
     public boolean needsOldRilFeature(String feature) { return false; }
 }

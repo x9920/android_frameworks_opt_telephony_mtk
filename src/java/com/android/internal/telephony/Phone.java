@@ -2049,4 +2049,39 @@ public interface Phone {
      * @return true if IMS is Registered
      */
     public boolean isImsRegistered();
+
+    // MTK addditions
+
+    /**
+     *  Set phone RAT family.
+     *
+     *  @param ratFamily bit mask to identify PhoneRatFamily.PHONE_RAT_FAMILY_2G,
+     *         PhoneRatFamily.PHONE_RAT_FAMILY_3G, PhoneRatFamily.PHONE_RAT_FAMILY_4G
+     *  @param response Callback message.
+     */
+    public void setPhoneRatFamily(int ratFamily, Message response);
+
+    /**
+     *  Get phone RAT family.
+     *
+     *  @return a bit mask to identify PhoneRatFamily.PHONE_RAT_FAMILY_2G,
+     *          PhoneRatFamily.PHONE_RAT_FAMILY_3G, PhoneRatFamily.PHONE_RAT_FAMILY_4G
+     */
+    public int getPhoneRatFamily();
+
+    /**
+     * Registers the handler when phone RAT family is changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for notifications when phone RAT family is changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForPhoneRatFamilyChanged(Handler h);
 }

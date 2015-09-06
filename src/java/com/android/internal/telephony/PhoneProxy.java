@@ -1579,4 +1579,27 @@ public class PhoneProxy extends Handler implements Phone {
         pw.flush();
         pw.println("++++++++++++++++++++++++++++++++");
     }
+
+    // MTK additions
+
+    @Override
+    public void setPhoneRatFamily(int ratFamily, Message response) {
+        mActivePhone.setPhoneRatFamily(ratFamily, response);
+    }
+
+    @Override
+    public int getPhoneRatFamily() {
+        return mActivePhone.getPhoneRatFamily();
+    }
+
+    @Override
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj) {
+        mActivePhone.registerForPhoneRatFamilyChanged(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForPhoneRatFamilyChanged(Handler h) {
+        mActivePhone.unregisterForPhoneRatFamilyChanged(h);
+    }
+
 }

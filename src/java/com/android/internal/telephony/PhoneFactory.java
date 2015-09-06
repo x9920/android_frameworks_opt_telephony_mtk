@@ -42,6 +42,10 @@ import com.android.internal.telephony.sip.SipPhoneFactory;
 import com.android.internal.telephony.uicc.IccCardProxy;
 import com.android.internal.telephony.uicc.UiccController;
 
+import com.mediatek.internal.telephony.worldphone.IWorldPhone;
+import com.mediatek.internal.telephony.worldphone.WorldPhoneUtil;
+import com.mediatek.internal.telephony.worldphone.WorldPhoneWrapper;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
@@ -74,6 +78,9 @@ public class PhoneFactory {
     static private boolean sMadeDefaults = false;
     static private PhoneNotifier sPhoneNotifier;
     static private Context sContext;
+
+    // MTK
+    static private IWorldPhone sWorldPhone = null;
 
     //***** Class Methods
 
@@ -236,6 +243,11 @@ public class PhoneFactory {
                 sSubInfoRecordUpdater = new SubscriptionInfoUpdater(context,
                         sProxyPhones, sCommandsInterfaces);
                 SubscriptionController.getInstance().updatePhonesAvailability(sProxyPhones);
+
+                // MTK
+                if (WorldPhoneUtil.isWorldPhoneSupport()) {
+                    sWorldPhone = WorldPhoneWrapper.getWorldPhoneInstance();
+                }
             }
         }
     }
@@ -255,6 +267,14 @@ public class PhoneFactory {
                     sPhoneNotifier, phoneId);
             return phone;
         }
+    }
+
+    public static IWorldPhone getWorldPhone() {
+        if (sWorldPhone == null) {
+            Rlog.d(LOG_TAG, "sWorldPhone is null");
+        }
+
+        return sWorldPhone;
     }
 
     private static <T> T instantiateCustomRIL(
