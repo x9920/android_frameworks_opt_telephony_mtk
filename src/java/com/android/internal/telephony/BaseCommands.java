@@ -95,6 +95,11 @@ public abstract class BaseCommands implements CommandsInterface {
     protected Registrant mSsRegistrant;
     protected Registrant mLceInfoRegistrant;
 
+    // MTK registrants
+    protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
+    protected RegistrantList mPlmnChangeNotificationRegistrant = new RegistrantList();
+    protected Registrant mRegistrationSuspendedRegistrant;
+
     // Preferred network type received from PhoneFactory.
     // This is used when establishing a connection to the
     // vendor ril so it starts up in the correct mode.
@@ -906,5 +911,45 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void setLocalCallHold(boolean lchStatus) {
+    }
+
+    // MTK additions
+
+    public void setTrm(int mode, Message result) {}
+
+    public void setOnPlmnChangeNotification(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mPlmnChangeNotificationRegistrant.add(r);
+    }
+
+    public void unSetOnPlmnChangeNotification(Handler h) {
+        mPlmnChangeNotificationRegistrant.remove(h);
+    }
+
+    public void setOnRegistrationSuspended(Handler h, int what, Object obj) {
+        mRegistrationSuspendedRegistrant = new Registrant(h, what, obj);
+    }
+
+    public void unSetOnRegistrationSuspended(Handler h) {
+        mRegistrationSuspendedRegistrant.clear();
+    }
+
+    @Override
+    public void setPhoneRatFamily(int ratFamily, Message response) {
+    }
+
+    @Override
+    public void getPhoneRatFamily(Message response) {
+    }
+
+    @Override
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mPhoneRatFamilyChangedRegistrants.add(r);
+    }
+
+    @Override
+    public void unregisterForPhoneRatFamilyChanged(Handler h) {
+        mPhoneRatFamilyChangedRegistrants.remove(h);
     }
 }

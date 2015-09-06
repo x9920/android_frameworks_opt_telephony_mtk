@@ -624,4 +624,38 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     @Override
     public void getModemActivityInfo(Message result) {
     }
+
+    // MTK
+
+    @Override
+    public void setTrm(int mode, Message result) {
+    }
+
+    @Override
+    public void setOnPlmnChangeNotification(Handler h, int what, Object obj) {
+    }
+
+    @Override
+    public void unSetOnPlmnChangeNotification(Handler h) {
+    }
+
+    @Override
+    public void setOnRegistrationSuspended(Handler h, int what, Object obj) {
+    }
+
+    @Override
+    public void unSetOnRegistrationSuspended(Handler h) {
+    }
+
+    @Override
+    public void setResumeRegistration(int sessionId, Message response) {
+    }
+
+    @Override
+    public void queryModemType(Message response) {
+    }
+
+    @Override
+    public void storeModemType(int modemType, Message response) {
+    }
 }

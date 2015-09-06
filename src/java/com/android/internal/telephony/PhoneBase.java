@@ -41,6 +41,7 @@ import android.telephony.CellInfo;
 import android.telephony.CellInfoCdma;
 import android.telephony.DataConnectionRealTimeInfo;
 import android.telephony.RadioAccessFamily;
+import android.telephony.PhoneRatFamily;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
@@ -178,8 +179,22 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected static final int EVENT_SS                             = 36;
     protected static final int EVENT_CONFIG_LCE                     = 37;
     private static final int EVENT_CHECK_FOR_NETWORK_AUTOMATIC      = 38;
+    // MTK
+    protected static final int EVENT_GET_PHONE_RAT_FAMILY              = 41;
+    protected static final int EVENT_PHONE_RAT_FAMILY_CHANGED_NOTIFY   = 42;
     protected static final int EVENT_LAST                           =
-            EVENT_CHECK_FOR_NETWORK_AUTOMATIC;
+            EVENT_PHONE_RAT_FAMILY_CHANGED_NOTIFY;
+
+    // MTK again - wtf
+    /// M: c2k modify, event constants. @{
+    protected static final int EVENT_SET_MEID_DONE                  = 101;
+    protected static final int EVENT_RUIM_READY                     = 102;
+    /// @}
+
+    /** M: for suspend data during plmn list */
+    protected static final int EVENT_GET_AVAILABLE_NETWORK_DONE = 500520;
+    protected static final int EVENT_DC_SWITCH_STATE_CHANGE = 500521;
+    protected static final int EVENT_GET_AVAILABLE_NETWORK = 500522;
 
     // For shared prefs.
     private static final String GSM_ROAMING_LIST_OVERRIDE_PREFIX = "gsm_roaming_list_";
@@ -249,6 +264,9 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected static final boolean LCE_PULL_MODE = true;
     protected int mReportInterval = 0;  // ms
     protected int mLceStatus = RILConstants.LCE_NOT_AVAILABLE;
+
+    // give the empty phone RAT family at initial, we will update it when radio available
+    protected int mPhoneRatFamily = PhoneRatFamily.PHONE_RAT_FAMILY_NONE;
 
     @Override
     public String getPhoneName() {
@@ -350,6 +368,9 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected final RegistrantList mEmergencyCallToggledRegistrants
             = new RegistrantList();
 
+    // MTK
+    protected final RegistrantList mPhoneRatFamilyChangedRegistrants
+            = new RegistrantList();
 
     protected Looper mLooper; /* to insure registrants are in correct thread*/
 
@@ -677,6 +698,20 @@ public abstract class PhoneBase extends Handler implements Phone {
                 onCheckForNetworkSelectionModeAutomatic(msg);
                 break;
             }
+
+            case EVENT_PHONE_RAT_FAMILY_CHANGED_NOTIFY:
+                ar = (AsyncResult) msg.obj;
+                Rlog.d(LOG_TAG, "Event EVENT_PHONE_RAT_FAMILY_CHANGED_NOTIFY "
+                        + mPhoneRatFamilyChangedRegistrants.size());
+                if (ar.exception == null) {
+                    PhoneRatFamily rat = (PhoneRatFamily)(ar.result);
+                    Rlog.d(LOG_TAG, "update mPhoneRatFamily, "
+                        + mPhoneRatFamilyChangedRegistrants.size() + ", " + rat);
+                    mPhoneRatFamily = rat.getRatFamily();
+                }
+                mPhoneRatFamilyChangedRegistrants.notifyRegistrants((AsyncResult) msg.obj);
+                break;
+
             default:
                 throw new RuntimeException("unexpected event not handled");
         }
@@ -2536,6 +2571,32 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected boolean shallDialOnCircuitSwitch(Bundle extras) {
             return (extras != null && extras.getInt(QtiVideoCallConstants.EXTRA_CALL_DOMAIN,
                     QtiVideoCallConstants.DOMAIN_AUTOMATIC) == QtiVideoCallConstants.DOMAIN_CS);
+    }
+
+    // MTK additions
+
+    @Override
+    public void setPhoneRatFamily(int ratFamily, Message response) {
+        mCi.setPhoneRatFamily(ratFamily, response);
+    }
+
+    @Override
+    public int getPhoneRatFamily() {
+        Rlog.d(LOG_TAG, "getPhoneRatFamily:ID:" + mPhoneId + ", RAT:" + mPhoneRatFamily);
+        return mPhoneRatFamily;
+    }
+
+    @Override
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mPhoneRatFamilyChangedRegistrants.add(r);
+        mCi.registerForPhoneRatFamilyChanged(this, EVENT_PHONE_RAT_FAMILY_CHANGED_NOTIFY, null);
+    }
+
+    @Override
+    public void unregisterForPhoneRatFamilyChanged(Handler h) {
+        mPhoneRatFamilyChangedRegistrants.remove(h);
+        mCi.unregisterForPhoneRatFamilyChanged(this);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

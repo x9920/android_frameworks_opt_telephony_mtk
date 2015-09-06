@@ -938,4 +938,154 @@ public class IccCardProxy extends Handler implements IccCard {
 
         pw.flush();
     }
+
+    // MTK additions
+
+    // Added by M begin
+    /**
+     * Query the SIM ME Lock type required to unlock.
+     *
+     * @return SIM ME Lock type
+     */
+    /*
+    public PersoSubState getNetworkPersoType() {
+        if (mUiccApplication != null) {
+            return mUiccApplication.getPersoSubState();
+        }
+        return PersoSubState.PERSOSUBSTATE_UNKNOWN;
+    }
+    */
+
+    /**
+     * Check whether ICC network lock is enabled
+     * This is an async call which returns lock state to applications directly
+     */
+    /*
+    @Override
+    public void queryIccNetworkLock(int category, Message onComplete) {
+        if (DBG) log("queryIccNetworkLock(): category =  " + category);
+        synchronized (mLock) {
+            if (mUiccApplication != null) {
+                mUiccApplication.queryIccNetworkLock(category, onComplete);
+            } else if (onComplete != null) {
+                Exception e = new RuntimeException("ICC card is absent.");
+                AsyncResult.forMessage(onComplete).exception = e;
+                onComplete.sendToTarget();
+                return;
+            }
+        }
+    }
+    */
+
+    /**
+     * Set the ICC network lock enabled or disabled
+     * When the operation is complete, onComplete will be sent to its handler
+     */
+    /*
+    @Override
+    public void setIccNetworkLockEnabled(int category,
+            int lockop, String password, String data_imsi, String gid1, String gid2, Message onComplete) {
+        if (DBG) log("SetIccNetworkEnabled(): category = " + category
+            + " lockop = " + lockop + " password = " + password
+            + " data_imsi = " + data_imsi + " gid1 = " + gid1 + " gid2 = " + gid2);
+        synchronized (mLock) {
+            if (mUiccApplication != null) {
+                mUiccApplication.setIccNetworkLockEnabled(category, lockop, password, data_imsi, gid1, gid2, onComplete);
+            } else if (onComplete != null) {
+                Exception e = new RuntimeException("ICC card is absent.");
+                AsyncResult.forMessage(onComplete).exception = e;
+                onComplete.sendToTarget();
+                return;
+            }
+        }
+    }
+    */
+
+    /**
+     * Used by SIM ME lock related enhancement feature(Modem SML change feature).
+     */
+    /*
+    public void repollIccStateForModemSmlChangeFeatrue(boolean needIntent) {
+        if (DBG) log("repollIccStateForModemSmlChangeFeatrue, needIntent = " + needIntent);
+        synchronized (mLock) {
+            mUiccController.repollIccStateForModemSmlChangeFeatrue(mSlotId, needIntent);
+        }
+    }
+
+    public void exchangeSimIo(int fileID, int command,
+                              int p1, int p2, int p3, String pathID, String data, String pin2, Message onComplete) {
+        if (mUiccCard != null && mUiccCard.getCardState() != CardState.CARDSTATE_ABSENT) {
+            mUiccCard.exchangeSimIo(fileID, command, p1, p2, p3, pathID, data, pin2, onComplete);
+        }
+    }
+
+    public void iccGetAtr(Message onComplete) {
+        if (mUiccCard != null && mUiccCard.getCardState() != CardState.CARDSTATE_ABSENT) {
+            mUiccCard.iccGetAtr(onComplete);
+        }
+    }
+
+    public void openLogicalChannelWithSw(String AID, Message onComplete) {
+        if (mUiccCard != null && mUiccCard.getCardState() != CardState.CARDSTATE_ABSENT) {
+            mUiccCard.iccOpenChannelWithSw(AID, onComplete);
+        }
+    }
+    */
+
+    // retrun usim property or use uicccardapplication app type
+    public String getIccCardType() {
+        if (mUiccCard != null && mUiccCard.getCardState() != CardState.CARDSTATE_ABSENT) {
+            return mUiccCard.getIccCardType();
+        }
+        return "";
+    }
+
+    /*
+    public void registerForRecovery(Handler h, int what, Object obj) {
+        synchronized (mLock) {
+            Registrant r = new Registrant(h, what, obj);
+
+            mRecoveryRegistrants.add(r);
+
+            if (getState() == State.READY) {
+                r.notifyRegistrant();
+            }
+        }
+    }
+
+    public void unregisterForRecovery(Handler h) {
+        synchronized (mLock) {
+            mRecoveryRegistrants.remove(h);
+        }
+    }
+    */
+
+    /**
+     * Notifies handler in case of FDN changed
+     */
+    /*
+    @Override
+    public void registerForFdnChanged(Handler h, int what, Object obj) {
+        synchronized (mLock) {
+            synchronized (mLock) {
+                Registrant r = new Registrant(h, what, obj);
+
+                mFdnChangedRegistrants.add(r);
+
+                if (getIccFdnEnabled()) {
+                    r.notifyRegistrant();
+                }
+            }
+        }
+    }
+
+    @Override
+    public void unregisterForFdnChanged(Handler h) {
+        synchronized (mLock) {
+            mFdnChangedRegistrants.remove(h);
+        }
+    }
+    */
+
+    // Added by M end
 }

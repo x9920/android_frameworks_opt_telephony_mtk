@@ -45,6 +45,10 @@ import com.android.internal.telephony.uicc.IccCardProxy;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.util.IndentingPrintWriter;
 
+import com.mediatek.internal.telephony.worldphone.IWorldPhone;
+import com.mediatek.internal.telephony.worldphone.WorldPhoneUtil;
+import com.mediatek.internal.telephony.worldphone.WorldPhoneWrapper;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.HashMap;
@@ -78,6 +82,9 @@ public class PhoneFactory {
     static private Context sContext;
 
     static private final HashMap<String, LocalLog>sLocalLogs = new HashMap<String, LocalLog>();
+
+    // MTK
+    static private IWorldPhone sWorldPhone = null;
 
     //***** Class Methods
 
@@ -206,6 +213,11 @@ public class PhoneFactory {
 
                 TelephonyPluginDelegate.getInstance().
                         initExtTelephonyClasses(context, sProxyPhones, sCommandsInterfaces);
+
+                // MTK
+                if (WorldPhoneUtil.isWorldPhoneSupport()) {
+                    sWorldPhone = WorldPhoneWrapper.getWorldPhoneInstance();
+                }
             }
         }
     }
@@ -225,6 +237,22 @@ public class PhoneFactory {
                     sCommandsInterfaces[phoneId], sPhoneNotifier, phoneId);
             return phone;
         }
+    }
+
+    public static IWorldPhone getWorldPhone() {
+        if (sWorldPhone == null) {
+            Rlog.d(LOG_TAG, "sWorldPhone is null");
+        }
+
+        return sWorldPhone;
+    }
+
+    private static <T> T instantiateCustomRIL(
+                      String sRILClassname, Context context, int networkMode, int cdmaSubscription, Integer instanceId)
+                      throws Exception {
+        Class<?> clazz = Class.forName("com.android.internal.telephony." + sRILClassname);
+        Constructor<?> constructor = clazz.getConstructor(Context.class, int.class, int.class, Integer.class);
+        return (T) clazz.cast(constructor.newInstance(context, networkMode, cdmaSubscription, instanceId));
     }
 
     public static Phone getDefaultPhone() {

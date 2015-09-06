@@ -2024,4 +2024,48 @@ public interface CommandsInterface {
      * @param lchStatus, true if call is in lch state
      */
     public void setLocalCallHold(boolean lchStatus);
+
+    // MTK additions
+
+    void setTrm(int mode, Message result);
+
+    void setOnPlmnChangeNotification(Handler h, int what, Object obj);
+    void unSetOnPlmnChangeNotification(Handler h);
+    void setOnRegistrationSuspended(Handler h, int what, Object obj);
+    void unSetOnRegistrationSuspended(Handler h);
+    void setResumeRegistration(int sessionId, Message response);
+    void storeModemType(int modemType, Message response);
+    void queryModemType(Message response);
+
+    /**
+     *  Set phone RAT family.
+     *
+     *  @param ratFamily bit mask to identify PhoneRatFamily.PHONE_RAT_FAMILY_2G,
+     *         PhoneRatFamily.PHONE_RAT_FAMILY_3G, PhoneRatFamily.PHONE_RAT_FAMILY_4G
+     *  @param result Callback message.
+     */
+    public void setPhoneRatFamily(int ratFamily, Message result);
+
+    /**
+     *  Get phone RAT family.
+     *
+     *  @param result Callback message.
+     */
+    public void getPhoneRatFamily(Message result);
+
+    /**
+     * Registers the handler when phone RAT family is changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForPhoneRatFamilyChanged(Handler h, int what, Object obj);
+
+    /**
+     * Unregister for notifications when phone RAT family is changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForPhoneRatFamilyChanged(Handler h);
 }
