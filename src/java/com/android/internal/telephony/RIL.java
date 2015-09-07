@@ -5088,6 +5088,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
         send(rr);
     }
 
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+        Rlog.e(RILJ_LOG_TAG, "setInitialAttachApn: MTK interface called on generic RIL!");
+    }
+
     public void setDataProfile(DataProfile[] dps, Message result) {
         if (RILJ_LOGD) riljLog("Set RIL_REQUEST_SET_DATA_PROFILE");
 
