@@ -1805,4 +1805,9 @@ public final class SimulatedCommands extends BaseCommands
     @Override
     public void storeModemType(int modemType, Message response) {
     }
+
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+    }
 }

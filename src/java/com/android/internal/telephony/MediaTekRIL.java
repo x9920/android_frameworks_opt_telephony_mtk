@@ -1849,6 +1849,40 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
         send(rr);
     }
 
+    /** M: add extra parameter */
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, Message result) {
+        Rlog.e(RILJ_LOG_TAG, "setInitialAttachApn: operatorNumeric is required on MTK!");
+        setInitialAttachApn(apn, protocol, authType, username, password, "", false, result);
+    }
+
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, String operatorNumeric, boolean canHandleIms, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_INITIAL_ATTACH_APN, null);
+
+        if (RILJ_LOGD) riljLog("Set RIL_REQUEST_SET_INITIAL_ATTACH_APN");
+
+        rr.mParcel.writeString(apn);
+        rr.mParcel.writeString(protocol);
+        rr.mParcel.writeInt(authType);
+        rr.mParcel.writeString(username);
+        rr.mParcel.writeString(password);
+
+        /** M: start */
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeInt(canHandleIms ? 1 : 0);
+        /* M: end */
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", apn:" + apn + ", protocol:" + protocol + ", authType:" + authType
+                + ", username:" + username + ", password:" + password
+                + ", operatorNumeric:" + operatorNumeric + ", canHandleIms:" + canHandleIms);
+
+        send(rr);
+    }
+
     private static int readRilMessage(InputStream is, byte[] buffer)
             throws IOException {
         int countRead;
