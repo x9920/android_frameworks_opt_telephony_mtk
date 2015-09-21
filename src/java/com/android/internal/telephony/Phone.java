@@ -109,6 +109,7 @@ public interface Phone {
     static final String REASON_NV_READY = "nvReady";
     static final String REASON_SINGLE_PDN_ARBITRATION = "SinglePdnArbitration";
     static final String REASON_DATA_SPECIFIC_DISABLED = "specificDisabled";
+    static final String REASON_SIM_NOT_READY = "simNotReady";
     static final String REASON_IWLAN_AVAILABLE = "iwlanAvailable";
 
     // Used for band mode selection methods
@@ -194,6 +195,13 @@ public interface Phone {
      * updates.
      */
     ServiceState getServiceState();
+
+    /**
+     * Get the current ServiceState. Use
+     * <code>registerForServiceStateChanged</code> to be informed of
+     * updates.
+     */
+    ServiceState getBaseServiceState();
 
     /**
      * Get the current CellLocation.
@@ -903,6 +911,13 @@ public interface Phone {
      *                errors are handled asynchronously.
      */
     public void addParticipant(String dialString) throws CallStateException;
+
+    /**
+     * Initiate to add a participant in an IMS call.
+     *
+     * @exception CallStateException operation is not supported.
+     */
+    public void addParticipant(String dialString, Message onComplete) throws CallStateException;
 
     /**
      * Handles PIN MMI commands (PIN/PIN2/PUK/PUK2), which are initiated
