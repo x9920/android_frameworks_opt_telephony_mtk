@@ -55,6 +55,7 @@ import android.telephony.SignalStrength;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.Display;
@@ -3387,6 +3388,12 @@ public class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_RIL_CONNECTED: {
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
+                // Set ecc list before MO call
+                if  (TelephonyManager.getDefault().getMultiSimConfiguration() == TelephonyManager.MultiSimVariants.DSDA
+                        || mInstanceId == 0) {
+                    setEccList();
+                }
+
                 // Initial conditions
                 // setRadioPower(false, null);
                 setPreferredNetworkType(mPreferredNetworkType, null);
@@ -5346,6 +5353,61 @@ public class RIL extends BaseCommands implements CommandsInterface {
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(modemType);
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        send(rr);
+    }
+
+    /*
+    public void
+    emergencyDial(String address, int clirMode, UUSInfo uusInfo, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_EMERGENCY_DIAL, result);
+
+        rr.mParcel.writeString(address);
+        rr.mParcel.writeInt(clirMode);
+        rr.mParcel.writeInt(0); // UUS information is absent
+
+        if (uusInfo == null) {
+            rr.mParcel.writeInt(0); // UUS information is absent
+        } else {
+            rr.mParcel.writeInt(1); // UUS information is present
+            rr.mParcel.writeInt(uusInfo.getType());
+            rr.mParcel.writeInt(uusInfo.getDcs());
+            rr.mParcel.writeByteArray(uusInfo.getUserData());
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+    */
+
+    public void setEccServiceCategory(int serviceCategory) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ECC_SERVICE_CATEGORY, null);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(serviceCategory);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+            + " " + serviceCategory);
+
+        send(rr);
+    }
+
+    private void setEccList() {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_ECC_LIST, null);
+        ArrayList<PhoneNumberUtils.EccEntry> eccList = PhoneNumberUtils.getEccList();
+
+        rr.mParcel.writeInt(eccList.size() * 3);
+        for (PhoneNumberUtils.EccEntry entry : eccList) {
+            rr.mParcel.writeString(entry.getEcc());
+            rr.mParcel.writeString(entry.getCategory());
+            String strCondition = entry.getCondition();
+            if (strCondition.equals(PhoneNumberUtils.EccEntry.ECC_FOR_MMI))
+                strCondition = PhoneNumberUtils.EccEntry.ECC_NO_SIM;
+            rr.mParcel.writeString(strCondition);
+        }
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
         send(rr);
     }
 }
