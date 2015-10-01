@@ -290,6 +290,10 @@ public class RIL extends BaseCommands implements CommandsInterface {
     // divide the response array without prior knowledge of the number of elements.
     protected int mQANElements = 4;
 
+    // MTK
+    // save the status of screen
+    private boolean isScreenOn = true;
+
     //***** Events
 
     static final int EVENT_SEND                 = 1;
@@ -2484,6 +2488,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
     }
 
     protected void sendScreenState(boolean on) {
+        // MTK
+        isScreenOn = on;
+
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SCREEN_STATE, null);
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(on ? 1 : 0);
@@ -3400,6 +3407,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 setCdmaSubscriptionSource(mCdmaSubscription, null);
                 setCellInfoListRate(Integer.MAX_VALUE, null);
                 notifyRegistrantsRilConnectionChanged(((int[])ret)[0]);
+                sendScreenState(isScreenOn);
                 break;
             }
             case RIL_UNSOL_CELL_INFO_LIST: {
