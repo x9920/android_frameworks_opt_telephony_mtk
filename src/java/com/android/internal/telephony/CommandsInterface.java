@@ -2027,6 +2027,49 @@ public interface CommandsInterface {
 
     // MTK additions
 
+    //MTK-START multiple application support
+    /**
+     * M: Open application in the UICC
+     *
+     * @param application: application ID
+     * @param response The message to send.
+     */
+    public void openIccApplication(int application, Message response);
+
+    /**
+     * Query application status
+     *
+     * @param sessionId: The channel ID
+     * @param response The message to send.
+     */
+    public void getIccApplicationStatus(int sessionId, Message result);
+
+    /**
+     * parameters equivalent to 27.007 AT+CRLA command
+     * channel is used to assign which application to get EF file.
+     * response.obj will be an AsyncResult
+     * response.obj.userObj will be a IccIoResult on success
+     */
+    void iccIOForAppEx(int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, int channel, Message response);
+
+    /**
+     * Register the handler for event notifications for sessionid of an application changed event.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    void registerForSessionChanged(Handler h, int what, Object obj);
+
+    /**
+     * Unregister the handler for event notifications for sessionid of an application changed event.
+     *
+     * @param h Handler for notification message.
+     */
+    void unregisterForSessionChanged(Handler h);
+    //MTK-END multiple application support
+
     /**
      * unlike the register* methods, there's only one Neighboring cell info handler
      *

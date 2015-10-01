@@ -5147,6 +5147,64 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     }
 
     // MTK additions
+    //MTK-START Support Multi-Application
+    @Override
+    public void openIccApplication(int application, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_OPEN_ICC_APPLICATION, response);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(application);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", application = " + application);
+        send(rr);
+    }
+
+    @Override
+    public void getIccApplicationStatus(int sessionId, Message result) {
+        //Note: This RIL request has not been renamed to ICC,
+        //       but this request is also valid for SIM and RUIM
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_ICC_APPLICATION_STATUS, result);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(sessionId);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                + ", session = " + sessionId);
+        send(rr);
+    }
+
+    @Override
+    public void iccIOForAppEx(int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, int channel , Message result) {
+        //Note: This RIL request has not been renamed to ICC,
+        //       but this request is also valid for SIM and RUIM
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SIM_IO_EX, result);
+
+        rr.mParcel.writeInt(command);
+        rr.mParcel.writeInt(fileid);
+        rr.mParcel.writeString(path);
+        rr.mParcel.writeInt(p1);
+        rr.mParcel.writeInt(p2);
+        rr.mParcel.writeInt(p3);
+        rr.mParcel.writeString(data);
+        rr.mParcel.writeString(pin2);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeInt(channel);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: "
+                + requestToString(rr.mRequest)
+                + " 0x" + Integer.toHexString(command)
+                + " 0x" + Integer.toHexString(fileid) + " "
+                + " path: " + path + ","
+                + p1 + "," + p2 + "," + p3 + ",channel:" + channel
+                + " aid: " + aid);
+
+        send(rr);
+    }
+    //MTK-END Support Multi-Application
+
     public void setTrm(int mode, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_TRM, null);
 
