@@ -2021,6 +2021,32 @@ public interface CommandsInterface {
 
     // MTK additions
 
+    /**
+     * unlike the register* methods, there's only one Neighboring cell info handler
+     *
+     * AsyncResult.result is an Object[]
+     * ((Object[])AsyncResult.result)[0] is a String containing the RAT
+     * ((Object[])AsyncResult.result)[1] is a String containing the neighboring cell info raw data
+     *
+     * Please note that the delivery of this message may be delayed several
+     * seconds on system startup
+     */
+    void registerForNeighboringInfo(Handler h, int what, Object obj);
+    void unregisterForNeighboringInfo(Handler h);
+
+    /**
+     * unlike the register* methods, there's only one Network info handler
+     *
+     * AsyncResult.result is an Object[]
+     * ((Object[])AsyncResult.result)[0] is a String containing the type
+     * ((Object[])AsyncResult.result)[1] is a String contain the network info raw data
+     *
+     * Please note that the delivery of this message may be delayed several
+     * seconds on system startup
+     */
+    void registerForNetworkInfo(Handler h, int what, Object obj);
+    void unregisterForNetworkInfo(Handler h);
+
     void setTrm(int mode, Message result);
 
     void setOnPlmnChangeNotification(Handler h, int what, Object obj);

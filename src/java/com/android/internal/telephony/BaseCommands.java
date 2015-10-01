@@ -99,6 +99,8 @@ public abstract class BaseCommands implements CommandsInterface {
 
     // MTK registrants
     protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
+    protected RegistrantList mNeighboringInfoRegistrants = new RegistrantList();
+    protected RegistrantList mNetworkInfoRegistrants = new RegistrantList();
     protected RegistrantList mPlmnChangeNotificationRegistrant = new RegistrantList();
     protected Registrant mRegistrationSuspendedRegistrant;
     // M: fast dormancy.
@@ -944,6 +946,24 @@ public abstract class BaseCommands implements CommandsInterface {
     }
 
     // MTK additions
+
+    public void registerForNeighboringInfo(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mNeighboringInfoRegistrants.add(r);
+    }
+
+    public void unregisterForNeighboringInfo(Handler h) {
+        mNeighboringInfoRegistrants.remove(h);
+    }
+
+    public void registerForNetworkInfo(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mNetworkInfoRegistrants.add(r);
+    }
+
+    public void unregisterForNetworkInfo(Handler h) {
+        mNetworkInfoRegistrants.remove(h);
+    }
 
     public void setTrm(int mode, Message result) {}
 
