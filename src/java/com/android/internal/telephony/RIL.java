@@ -5410,4 +5410,43 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
         send(rr);
     }
+
+    // M: Fast Dormancy
+    public void setScri(boolean forceRelease, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SCRI, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(forceRelease ? 1 : 0);
+
+        send(rr);
+    }
+
+    //[New R8 modem FD]
+    public void setFDMode(int mode, int parameter1, int parameter2, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_FD_MODE, response);
+
+        //AT+EFD=<mode>[,<param1>[,<param2>]]
+        //mode=0:disable modem Fast Dormancy; mode=1:enable modem Fast Dormancy
+        //mode=3:inform modem the screen status; parameter1: screen on or off
+        //mode=2:Fast Dormancy inactivity timer; parameter1:timer_id; parameter2:timer_value
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        if (mode == 0 || mode == 1) {
+            rr.mParcel.writeInt(1);
+            rr.mParcel.writeInt(mode);
+        } else if (mode == 3) {
+            rr.mParcel.writeInt(2);
+            rr.mParcel.writeInt(mode);
+            rr.mParcel.writeInt(parameter1);
+        } else if (mode == 2) {
+            rr.mParcel.writeInt(3);
+            rr.mParcel.writeInt(mode);
+            rr.mParcel.writeInt(parameter1);
+            rr.mParcel.writeInt(parameter2);
+        }
+
+        send(rr);
+    }
 }
