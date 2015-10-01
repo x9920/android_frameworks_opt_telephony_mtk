@@ -1083,6 +1083,22 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
         int newResponseCode = 0;
 
         switch (response) {
+            case RIL_UNSOL_NEIGHBORING_CELL_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mNeighboringInfoRegistrants != null) {
+                    mNeighboringInfoRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_NETWORK_INFO:
+                if (RILJ_LOGD) unsljLogvRet(response, ret);
+                if (mNetworkInfoRegistrants != null) {
+                    mNetworkInfoRegistrants.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
             case RIL_UNSOL_SET_PHONE_RAT_FAMILY_COMPLETE:
                 if (RILJ_LOGD) unsljLogRet(response, ret);
                 riljLog("mPhoneRatFamilyreg size :" + mPhoneRatFamilyChangedRegistrants.size());
