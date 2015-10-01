@@ -99,6 +99,8 @@ public abstract class BaseCommands implements CommandsInterface {
     protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
     protected RegistrantList mPlmnChangeNotificationRegistrant = new RegistrantList();
     protected Registrant mRegistrationSuspendedRegistrant;
+    // M: fast dormancy.
+    protected Registrant mScriResultRegistrant;
 
     // Preferred network type received from PhoneFactory.
     // This is used when establishing a connection to the
@@ -951,5 +953,20 @@ public abstract class BaseCommands implements CommandsInterface {
     @Override
     public void unregisterForPhoneRatFamilyChanged(Handler h) {
         mPhoneRatFamilyChangedRegistrants.remove(h);
+    }
+
+    // M: fast dormancy
+    public void setScriResult(Handler h, int what, Object obj) {
+        mScriResultRegistrant = new Registrant(h, what, obj);
+    }
+
+    public void unSetScriResult(Handler h) {
+        mScriResultRegistrant.clear();
+    }
+
+    public void setScri(boolean forceRelease, Message response){
+    }
+
+    public void setFDMode(int mode, int parameter1, int parameter2, Message response){
     }
 }

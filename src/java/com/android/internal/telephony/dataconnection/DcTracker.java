@@ -80,6 +80,9 @@ import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.ArrayUtils;
 
+// MTK
+import com.mediatek.internal.telephony.dataconnection.FdManager;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -171,6 +174,37 @@ public class DcTracker extends DcTrackerBase {
     private boolean mDeregistrationAlarmState = false;
     private PendingIntent mImsDeregistrationDelayIntent = null;
 
+    // MTK
+    protected FdManager mFdMgr;
+
+    /* IWLAN and WWAN co-exist flag */
+    private boolean mWwanIwlanCoexistFlag = false;
+
+    private static final int EVENT_3GPP_RECORDS_LOADED = 100;
+
+    Handler mSimRecordsLoadedHandler = new Handler() {
+        @Override
+        public void handleMessage (Message msg) {
+            if (!mPhone.mIsTheCurrentActivePhone || mIsDisposed) {
+                loge("Sim handler handleMessage: Ignore msgs since phone is inactive");
+                return;
+            }
+
+            switch (msg.what) {
+                case EVENT_3GPP_RECORDS_LOADED:
+                    log("EVENT_3GPP_RECORDS_LOADED");
+                    onSimRecordsLoaded();
+                    break;
+            }
+        }
+    };
+
+    private CdmaApnProfileTracker mOmhApt;
+
+    /* MMS Data Profile Device Override */
+    private static final int MMS_DATA_PROFILE = SystemProperties.getInt(
+            "ro.telephony.mms_data_profile", RILConstants.DATA_PROFILE_DEFAULT);
+
     //***** Constructor
     public DcTracker(PhoneBase p) {
         super(p);
@@ -192,6 +226,9 @@ public class DcTracker extends DcTrackerBase {
             filter.addAction(INTENT_RESTART_TRYSETUP_ALARM + '.' + apnContext.getApnType());
             mPhone.getContext().registerReceiver(mIntentReceiver, filter, null, mPhone);
         }
+
+        // MTK Fast Dormancy
+        mFdMgr = FdManager.getInstance(p);
 
         // Add Emergency APN to APN setting list by default to support EPDN in sim absent cases
         initEmergencyApnSetting();

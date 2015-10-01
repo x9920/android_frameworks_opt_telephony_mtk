@@ -2071,4 +2071,10 @@ public interface CommandsInterface {
 
     public void setInitialAttachApn(String apn, String protocol, int authType, String username,
             String password, String operatorNumeric, boolean canHandleIms, Message result);
+
+    // Fast Dormancy
+    void setScri(boolean forceRelease, Message response);
+    void setFDMode(int mode, int parameter1, int parameter2, Message response);
+    public void setScriResult(Handler h, int what, Object obj);
+    public void unSetScriResult(Handler h);
 }
