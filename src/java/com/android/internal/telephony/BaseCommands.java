@@ -99,6 +99,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     // MTK registrants
     protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
+    protected RegistrantList mSessionChangedRegistrants = new RegistrantList();
     protected RegistrantList mNeighboringInfoRegistrants = new RegistrantList();
     protected RegistrantList mNetworkInfoRegistrants = new RegistrantList();
     protected RegistrantList mPlmnChangeNotificationRegistrant = new RegistrantList();
@@ -946,6 +947,32 @@ public abstract class BaseCommands implements CommandsInterface {
     }
 
     // MTK additions
+
+    //MTK-START Support Multi-Application
+    @Override
+    public void openIccApplication(int application, Message response) {
+    }
+
+    @Override
+    public void getIccApplicationStatus(int sessionId, Message result) {
+    }
+
+    @Override
+    public void iccIOForAppEx(int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, int channel, Message response) {
+    }
+
+    @Override
+    public void registerForSessionChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSessionChangedRegistrants.add(r);
+    }
+
+    @Override
+    public void unregisterForSessionChanged(Handler h) {
+        mSessionChangedRegistrants.remove(h);
+    }
+    //MTK-END Support Multi-Application
 
     public void registerForNeighboringInfo(Handler h, int what, Object obj) {
         Registrant r = new Registrant(h, what, obj);
