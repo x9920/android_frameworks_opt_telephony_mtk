@@ -2065,6 +2065,109 @@ public interface CommandsInterface {
     //MTK-END multiple application support
 
     /**
+     * Query network lock status according to indicated category.
+     *
+     * @param categrory network lock category
+     *                  0 for Network personalisation category
+     *                  1 for Network subset personalisation category
+     *                  2 for Service provider personalisation category
+     *                  3 for Corporate(GID) personalisation category
+     *                  4 for SIM/USIM(IMSI) personalisation category
+     * @param response Callback message containing response structure.
+     */
+    void queryNetworkLock(int categrory, Message response);
+
+    /**
+     * Query network lock status according to indicated category.
+     *
+     * @param categrory network lock category
+     *                  "0" for Network personalisation category
+     *                  "1" for Network subset personalisation category
+     *                  "2" for Service provider personalisation category
+     *                  "3" for Corporate(GID) personalisation category
+     *                  "4" for SIM/USIM(IMSI) personalisation category
+     * @param lockop lock operation
+     *               "0" for unlock opreation
+     *               "1" for lock opreation
+     *               "2" for add lock opreation
+     *               "3" for remove lock opreation
+     *               "4" for disable lock category opreation
+     * @param password password of indicated network lock
+     * @param data_imsi IMSI value used to setup lock
+     * @param gid1 GID1 value used to setup lock
+     * @param gid2 GID2 value used to setup lock
+     * @param response Callback message containing response structure.
+     */
+    void setNetworkLock(int catagory, int lockop, String password,
+            String data_imsi, String gid1, String gid2, Message response);
+
+
+    /**
+     * Request security context authentication for SIM/USIM/ISIM
+     */
+    public void doGeneralSimAuthentication(int sessionId, int mode , int tag, String param1,
+                                                    String param2, Message response);
+
+    void iccGetATR(Message result);
+    void iccOpenChannelWithSw(String AID, Message result);
+
+    void registerForSimMissing(Handler h, int what, Object obj);
+    void unregisterForSimMissing(Handler h);
+
+    void registerForSimRecovery(Handler h, int what, Object obj);
+    void unregisterForSimRecovery(Handler h);
+
+    public void registerForVirtualSimOn(Handler h, int what, Object obj);
+    public void unregisterForVirtualSimOn(Handler h);
+
+    public void registerForVirtualSimOff(Handler h, int what, Object obj);
+    public void unregisterForVirtualSimOff(Handler h);
+
+    /**
+     * Sets the handler for event notifications for SIM plug-out event.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    void registerForSimPlugOut(Handler h, int what, Object obj);
+
+    /**
+     * Unregister the handler for event notifications for SIM plug-out event.
+     *
+     * @param h Handler for notification message.
+     */
+    void unregisterForSimPlugOut(Handler h);
+
+    /**
+     * Sets the handler for event notifications for SIM plug-in event.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    void registerForSimPlugIn(Handler h, int what, Object obj);
+
+    /**
+     * Unregister the handler for event notifications for SIM plug-in event.
+     *
+     * @param h Handler for notification message.
+     */
+    void unregisterForSimPlugIn(Handler h);
+
+    /**
+     * Sets the handler for event notifications for SIM common slot no changed.
+     *
+     */
+    void registerForCommonSlotNoChanged(Handler h, int what, Object obj);
+
+    /**
+     * Unregister the handler for event notifications for SIM common slot no changed.
+     *
+     */
+    void unregisterForCommonSlotNoChanged(Handler h);
+
+    /**
      * unlike the register* methods, there's only one Neighboring cell info handler
      *
      * AsyncResult.result is an Object[]

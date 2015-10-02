@@ -100,6 +100,14 @@ public abstract class BaseCommands implements CommandsInterface {
     // MTK registrants
     protected RegistrantList mPhoneRatFamilyChangedRegistrants = new RegistrantList();
     protected RegistrantList mSessionChangedRegistrants = new RegistrantList();
+    protected RegistrantList mSimMissing = new RegistrantList();
+    protected RegistrantList mSimRecovery = new RegistrantList();
+    protected RegistrantList mVirtualSimOn = new RegistrantList();
+    protected RegistrantList mVirtualSimOff = new RegistrantList();
+    protected RegistrantList mSimPlugOutRegistrants = new RegistrantList();
+    protected RegistrantList mSimPlugInRegistrants = new RegistrantList();
+    protected RegistrantList mCommonSlotNoChangedRegistrants = new RegistrantList();
+    protected RegistrantList mDataAllowedRegistrants = new RegistrantList();
     protected RegistrantList mNeighboringInfoRegistrants = new RegistrantList();
     protected RegistrantList mNetworkInfoRegistrants = new RegistrantList();
     protected RegistrantList mPlmnChangeNotificationRegistrant = new RegistrantList();
@@ -117,6 +125,12 @@ public abstract class BaseCommands implements CommandsInterface {
     protected int mPhoneType;
     // RIL Version
     protected int mRilVersion = -1;
+
+    // MTK states
+    /* M: call control part start */
+    protected boolean mbWaitingForECFURegistrants = false;
+    protected Object mCfuReturnValue = null; ///* M: SS part */
+    /* M: call control part end */
 
     public BaseCommands(Context context) {
         mContext = context;  // May be null (if so we won't log statistics)
@@ -973,6 +987,82 @@ public abstract class BaseCommands implements CommandsInterface {
         mSessionChangedRegistrants.remove(h);
     }
     //MTK-END Support Multi-Application
+
+    //MTK-START Support SIM ME lock
+    @Override
+    public void queryNetworkLock(int categrory, Message response){};
+
+    @Override
+    public void setNetworkLock(int catagory, int lockop, String password,
+            String data_imsi, String gid1, String gid2, Message response){};
+    //MTK-END Support SIM ME lock
+
+    @Override
+    public void doGeneralSimAuthentication(int sessionId, int mode , int tag, String param1,
+                                          String param2, Message response) {
+    }
+
+    public void registerForSimMissing(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSimMissing.add(r);
+    }
+    public void unregisterForSimMissing(Handler h) {
+        mSimMissing.remove(h);
+    }
+
+    public void registerForSimRecovery(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSimRecovery.add(r);
+    }
+
+    public void unregisterForSimRecovery(Handler h) {
+        mSimRecovery.remove(h);
+    }
+
+    public void registerForVirtualSimOn(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mVirtualSimOn.add(r);
+    }
+
+    public void unregisterForVirtualSimOn(Handler h) {
+        mVirtualSimOn.remove(h);
+    }
+
+    public void registerForVirtualSimOff(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mVirtualSimOff.add(r);
+    }
+
+    public void unregisterForVirtualSimOff(Handler h) {
+        mVirtualSimOff.remove(h);
+    }
+
+    public void registerForSimPlugOut(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSimPlugOutRegistrants.add(r);
+    }
+
+    public void unregisterForSimPlugOut(Handler h) {
+        mSimPlugOutRegistrants.remove(h);
+    }
+
+    public void registerForSimPlugIn(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mSimPlugInRegistrants.add(r);
+    }
+
+    public void unregisterForSimPlugIn(Handler h) {
+        mSimPlugInRegistrants.remove(h);
+    }
+
+    public void registerForCommonSlotNoChanged(Handler h, int what, Object obj) {
+        Registrant r = new Registrant(h, what, obj);
+        mCommonSlotNoChangedRegistrants.add(r);
+    }
+
+    public void unregisterForCommonSlotNoChanged(Handler h) {
+        mCommonSlotNoChangedRegistrants.remove(h);
+    }
 
     public void registerForNeighboringInfo(Handler h, int what, Object obj) {
         Registrant r = new Registrant(h, what, obj);

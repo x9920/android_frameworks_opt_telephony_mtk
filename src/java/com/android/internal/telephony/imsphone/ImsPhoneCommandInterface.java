@@ -589,6 +589,14 @@ class ImsPhoneCommandInterface extends BaseCommands implements CommandsInterface
     // MTK
 
     @Override
+    public void iccGetATR(Message response) {
+    }
+
+    @Override
+    public void iccOpenChannelWithSw(String AID, Message result){
+    }
+
+    @Override
     public void setTrm(int mode, Message result) {
     }
 

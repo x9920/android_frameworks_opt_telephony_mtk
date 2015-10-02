@@ -1119,6 +1119,106 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
                 */
                 break;
 
+            case RIL_UNSOL_STK_EVDL_CALL:
+                Rlog.e(RILJ_LOG_TAG, "RIL_UNSOL_STK_EVDL_CALL: stub!");
+                /*
+                if (false == SystemProperties.get("ro.mtk_bsp_package").equals("1")) {
+                    if (RILJ_LOGD) unsljLogvRet(response, ret);
+                    if (mStkEvdlCallRegistrant != null) {
+                        mStkEvdlCallRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                    }
+                }
+                */
+                break;
+
+            case RIL_UNSOL_STK_CALL_CTRL:
+                if (RILJ_LOGD) {
+                    unsljLogvRet(response, ret);
+                }
+                Rlog.e(RILJ_LOG_TAG, "RIL_UNSOL_STK_CALL_CTRL: stub!");
+                /*
+                if (mStkCallCtrlRegistrant != null) {
+                    mStkCallCtrlRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                */
+                break;
+
+            case RIL_UNSOL_STK_SETUP_MENU_RESET:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                Rlog.e(RILJ_LOG_TAG, "RIL_UNSOL_STK_SETUP_MENU_RESET: stub!");
+                /*
+                if (mStkSetupMenuResetRegistrant != null) {
+                    mStkSetupMenuResetRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                */
+                break;
+
+            //MTK-START multiple application support
+            case RIL_UNSOL_APPLICATION_SESSION_ID_CHANGED: {
+                if (RILJ_LOGD) unsljLog(response);
+                if (mSessionChangedRegistrants != null) {
+                    mSessionChangedRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
+                }
+                break;
+            }
+            //MTK-END multiple application support
+
+            case RIL_UNSOL_SIM_MISSING:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimMissing != null) {
+                    mSimMissing.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_SIM_RECOVERY:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimRecovery != null) {
+                    mSimRecovery.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_VIRTUAL_SIM_ON:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mVirtualSimOn != null) {
+                    mVirtualSimOn.notifyRegistrants(
+                                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_VIRTUAL_SIM_OFF:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mVirtualSimOff != null) {
+                    mVirtualSimOff.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_SIM_PLUG_OUT:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimPlugOutRegistrants != null) {
+                    mSimPlugOutRegistrants.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                mCfuReturnValue = null;
+                break;
+
+            case RIL_UNSOL_SIM_PLUG_IN:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+                if (mSimPlugInRegistrants != null) {
+                    mSimPlugInRegistrants.notifyRegistrants(
+                        new AsyncResult(null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_SIM_COMMON_SLOT_NO_CHANGED:
+                if (RILJ_LOGD) unsljLog(response);
+                if (mCommonSlotNoChangedRegistrants != null) {
+                    mCommonSlotNoChangedRegistrants.notifyRegistrants(new AsyncResult(null, null, null));
+                }
+                break;
+
             case RIL_UNSOL_RESPONSE_PLMN_CHANGED:
                 if (RILJ_LOGD) unsljLogvRet(response, ret);
                 if (mPlmnChangeNotificationRegistrant != null) {
@@ -1130,6 +1230,17 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
                 if (RILJ_LOGD) unsljLogvRet(response, ret);
                 if (mRegistrationSuspendedRegistrant != null) {
                     mRegistrationSuspendedRegistrant.notifyRegistrant(new AsyncResult(null, ret, null));
+                }
+                break;
+
+            // M: Fast Dormancy
+            case RIL_UNSOL_SCRI_RESULT:
+                Integer scriResult = (((int[]) ret)[0]);
+                riljLog("s:" + scriResult + ":" + (((int[]) ret)[0]));
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mScriResultRegistrant != null) {
+                   mScriResultRegistrant.notifyRegistrant(new AsyncResult(null, scriResult, null));
                 }
                 break;
 
@@ -1149,14 +1260,6 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
             case RIL_UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED:
                 rewindAndReplace = true;
                 newResponseCode = RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED;
-                break;
-
-            case RIL_UNSOL_SIM_INSERTED_STATUS:
-            case RIL_UNSOL_SIM_MISSING:
-            case RIL_UNSOL_SIM_PLUG_OUT:
-            case RIL_UNSOL_SIM_PLUG_IN:
-                rewindAndReplace = true;
-                newResponseCode = RIL_UNSOL_RESPONSE_SIM_STATUS_CHANGED;
                 break;
 
             case RIL_UNSOL_SMS_READY_NOTIFICATION:

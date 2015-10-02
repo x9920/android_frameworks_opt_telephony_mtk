@@ -35,7 +35,10 @@ public final class UsimFileHandler extends IccFileHandler implements IccConstant
     @Override
     protected String getEFPath(int efid) {
         switch(efid) {
+        case EF_ICCID:
+            return null;
         case EF_SMS:
+        case EF_SMSP:   // [ALPS01206315] Support EF_SMSP
         case EF_EXT6:
         case EF_EXT5:
         case EF_MWIS:
@@ -60,8 +63,12 @@ public final class UsimFileHandler extends IccFileHandler implements IccConstant
         case EF_CSP_CPHS:
         case EF_GID1:
         case EF_LI:
+        case EF_ECC:
         case EF_PLMNWACT:
             return MF_SIM + DF_ADF;
+
+        case EF_PSISMSC:
+            return /*MF_SIM +*/ DF_TELECOM;
 
         case EF_PBR:
             // we only support global phonebook.
