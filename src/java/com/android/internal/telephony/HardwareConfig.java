@@ -161,6 +161,7 @@ public class HardwareConfig {
             maxActiveVoiceCall = maxV;
             maxActiveDataCall = maxD;
             maxStandby = maxS;
+            Rlog.d(LOG_TAG, "assignModem: result=" + this.toString());
         }
     }
 
@@ -169,6 +170,7 @@ public class HardwareConfig {
             uuid = id;
             modemUuid = link;
             state = state;
+            Rlog.d(LOG_TAG, "assignSim: result=" + this.toString());
         }
     }
 

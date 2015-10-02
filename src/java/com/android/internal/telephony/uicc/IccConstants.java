@@ -99,4 +99,31 @@ public interface IccConstants {
 
     //UICC access
     static final String DF_ADF = "7FFF";
+
+    // MTK
+    static final int EF_ECC = 0x6FB7;
+
+    // USIM SIM file ids from TS 31.102
+    static final int EF_PSISMSC = 0x6FE5;
+    static final int EF_GBABP = 0x6fD6;
+    // [ALPS01206315] Support EF_SMSP (EF ids from 11.11/31.102)
+    static final int EF_SMSP = 0x6F42;
+    static final int EF_ELP = 0x2F05;
+    // ALPS00302702 RAT balancing
+    static public final int EF_RAT = 0x4F36; // ADF(USIM)/7F66/5F30/4F36
+    static final String DF_USIM = "7FFF";
+    static final int EF_GID2 = 0x6F3F;
+
+    // MTK-START [ALPS00092673] Orange feature merge back added by mtk80589 in 2011.11.15
+    /*
+      Detail description:
+      This feature provides a interface to get menu title string from EF_SUME
+    */
+    // SET UP MENU ELEMENTS
+    static final int EF_SUME = 0x6F54;
+    // MTK-END [ALPS00092673] Orange feature merge back added by mtk80589 in 2011.11.15
+
+    //ISIM access file ids from TS 31.103
+    static final int EF_ISIM_GBABP = 0x6fd5;
+    static final int EF_ISIM_GBANL = 0x6fd7;
 }

@@ -5205,6 +5205,108 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     }
     //MTK-END Support Multi-Application
 
+    @Override
+    public void queryNetworkLock(int category, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_SIM_NETWORK_LOCK, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        riljLog("queryNetworkLock:" + category);
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(category);
+
+        send(rr);
+    }
+
+    @Override
+    public void setNetworkLock(int catagory, int lockop, String password,
+                        String data_imsi, String gid1, String gid2, Message response) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_SIM_NETWORK_LOCK, response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        riljLog("setNetworkLock:" + catagory + ", " + lockop + ", " + password + ", " + data_imsi
+                + ", " + gid1 + ", " + gid2);
+
+        rr.mParcel.writeInt(6);
+        rr.mParcel.writeString(Integer.toString(catagory));
+        rr.mParcel.writeString(Integer.toString(lockop));
+        if (null != password) {
+            rr.mParcel.writeString(password);
+        } else {
+            rr.mParcel.writeString("");
+        }
+        rr.mParcel.writeString(data_imsi);
+        rr.mParcel.writeString(gid1);
+        rr.mParcel.writeString(gid2);
+
+        send(rr);
+    }
+
+    @Override
+    public void doGeneralSimAuthentication(int sessionId, int mode , int tag, String param1,
+                                         String param2, Message response) {
+
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GENERAL_SIM_AUTH, response);
+
+        rr.mParcel.writeInt(sessionId);
+        rr.mParcel.writeInt(mode);
+
+        // Calcuate param1 length in byte length
+        if (param1 != null && param1.length() > 0) {
+            String length = Integer.toHexString(param1.length() / 2);
+            length = (((length.length() % 2 == 1) ? "0" : "") + length);
+            // Session id is equal to 0, for backward compability, we use old AT command
+            // old AT command no need to include param's length
+            rr.mParcel.writeString(((sessionId == 0) ? param1 : (length + param1)));
+        } else {
+            rr.mParcel.writeString(param1);
+        }
+
+        // Calcuate param2 length in byte length
+        if (param2 != null && param2.length() > 0) {
+            String length = Integer.toHexString(param2.length() / 2);
+            length = (((length.length() % 2 == 1) ? "0" : "") + length);
+            // Session id is equal to 0, for backward compability, we use old AT command
+            // old AT command no need to include param's length
+            rr.mParcel.writeString(((sessionId == 0) ? param2 : (length + param2)));
+        } else {
+            rr.mParcel.writeString(param2);
+        }
+
+        if (mode == 1) {
+            rr.mParcel.writeInt(tag);
+        }
+
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) + ": " +
+            "session = " + sessionId + ",mode = " + mode + ",tag = " + tag + ", "  + param1 + ", " + param2);
+
+        send(rr);
+    }
+
+    @Override
+    public void iccGetATR(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_GET_ATR, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    @Override
+    public void iccOpenChannelWithSw(String AID, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_OPEN_CHANNEL_WITH_SW, result);
+
+        rr.mParcel.writeString(AID);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccOpenChannelWithSw: " + requestToString(rr.mRequest)
+                + " " + AID);
+
+        send(rr);
+    }
+
     public void setTrm(int mode, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_TRM, null);
 

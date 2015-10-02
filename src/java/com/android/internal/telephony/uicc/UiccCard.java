@@ -98,6 +98,10 @@ public class UiccCard {
 
     private static final LocalLog mLocalLog = new LocalLog(100);
 
+    // MTK
+    private static final int EVENT_GET_ATR_DONE = 100;
+    private static final int EVENT_OPEN_CHANNEL_WITH_SW_DONE = 101;
+
     private int mPhoneId;
 
     // MTK
@@ -374,6 +378,10 @@ public class UiccCard {
                 case EVENT_TRANSMIT_APDU_LOGICAL_CHANNEL_DONE:
                 case EVENT_TRANSMIT_APDU_BASIC_CHANNEL_DONE:
                 case EVENT_SIM_IO_DONE:
+                case EVENT_SIM_GET_ATR_DONE:
+                // MTK
+                case EVENT_GET_ATR_DONE:
+                case EVENT_OPEN_CHANNEL_WITH_SW_DONE:
                     AsyncResult ar = (AsyncResult)msg.obj;
                     if (ar.exception != null) {
                         loglocal("Exception: " + ar.exception);
@@ -725,16 +733,14 @@ public class UiccCard {
 
     // MTK additions
 
-    // Added by M begin
-    /*
     public int getSlotId() {
-        return mSlotId;
+        return mPhoneId;
     }
 
     public UiccCard(Context c, CommandsInterface ci, IccCardStatus ics, int slotId, boolean isUpdateSiminfo) {
         if (DBG) log("Creating simId " + slotId + ",isUpdateSiminfo" + isUpdateSiminfo);
         mCardState = ics.mCardState;
-        mSlotId = slotId;
+        mPhoneId = slotId;
         update(c, ci, ics, isUpdateSiminfo);
     }
 
@@ -747,17 +753,13 @@ public class UiccCard {
     public void iccGetAtr(Message onComplete) {
         mCi.iccGetATR(mHandler.obtainMessage(EVENT_GET_ATR_DONE, onComplete));
     }
-    */
 
     public String getIccCardType() {
-        // TODO: port MTK slot id
-        final int mSlotId = 0;
-        final String mIccType = SystemProperties.get(UICCCARD_PROPERTY_RIL_UICC_TYPE[mSlotId]);
+        final String mIccType = SystemProperties.get(UICCCARD_PROPERTY_RIL_UICC_TYPE[mPhoneId]);
         if (DBG) log("getIccCardType(): iccType = " + mIccType);
         return mIccType;
     }
 
-    /*
     public void iccOpenChannelWithSw(String AID, Message onComplete) {
         mCi.iccOpenChannelWithSw(AID,
             mHandler.obtainMessage(EVENT_OPEN_CHANNEL_WITH_SW_DONE, onComplete));
@@ -820,6 +822,4 @@ public class UiccCard {
             mLastRadioState = radioState;
         }
     }
-    */
-    // Added by M end
 }
