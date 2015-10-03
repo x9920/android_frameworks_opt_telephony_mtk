@@ -111,23 +111,23 @@ public class ApnSetting {
             int profileId, boolean modemCognitive, int maxConns, int waitTime, int maxConnsTime,
             int mtu, String mvnoType, String mvnoMatchData) {
         this.id = id;
-        this.numeric = numeric;
-        this.carrier = carrier;
-        this.apn = apn;
-        this.proxy = proxy;
-        this.port = port;
-        this.mmsc = mmsc;
-        this.mmsProxy = mmsProxy;
-        this.mmsPort = mmsPort;
-        this.user = user;
-        this.password = password;
+        this.numeric = numeric == null ? "" : numeric;
+        this.carrier = carrier == null ? "" : carrier;
+        this.apn = apn == null ? "" : apn;
+        this.proxy = proxy == null ? "" : proxy;
+        this.port = port == null ? "" : port;
+        this.mmsc = mmsc == null ? "" : mmsc;
+        this.mmsProxy = mmsProxy == null ? "" : mmsProxy;
+        this.mmsPort = mmsPort == null ? "" : mmsPort;
+        this.user = user == null ? "" : user;
+        this.password = password == null ? "" : password;
         this.authType = authType;
         this.types = new String[types.length];
         for (int i = 0; i < types.length; i++) {
-            this.types[i] = types[i].toLowerCase(Locale.ROOT);
+            this.types[i] = types[i] == null ? "" : types[i].toLowerCase(Locale.ROOT);
         }
-        this.protocol = protocol;
-        this.roamingProtocol = roamingProtocol;
+        this.protocol = protocol == null ? "" : protocol;
+        this.roamingProtocol = roamingProtocol == null ? "" : roamingProtocol;
         this.carrierEnabled = carrierEnabled;
         this.bearer = bearer;
         this.profileId = profileId;
@@ -136,8 +136,8 @@ public class ApnSetting {
         this.waitTime = waitTime;
         this.maxConnsTime = maxConnsTime;
         this.mtu = mtu;
-        this.mvnoType = mvnoType;
-        this.mvnoMatchData = mvnoMatchData;
+        this.mvnoType = mvnoType == null ? "" : mvnoType;
+        this.mvnoMatchData = mvnoMatchData == null ? "" : mvnoMatchData;
 
     }
 
