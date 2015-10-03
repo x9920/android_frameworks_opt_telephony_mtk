@@ -21,6 +21,7 @@ import android.os.Message;
 
 import com.android.internal.telephony.IccCardConstants.State;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus;
+import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.IccFileHandler;
 import com.android.internal.telephony.uicc.IccRecords;
 
@@ -242,7 +243,7 @@ public interface IccCard {
      *
      * @internal
      */
-    // public PersoSubState getNetworkPersoType();
+    public PersoSubState getNetworkPersoType();
 
     /**
      * Use to query indicated category's ME lock status
@@ -257,7 +258,7 @@ public interface IccCard {
      *
      * @internal
      */
-    // public void queryIccNetworkLock(int category, Message onComplete);
+    public void queryIccNetworkLock(int category, Message onComplete);
 
     /**
      * Use to set indicated category's ME lock status
@@ -277,8 +278,8 @@ public interface IccCard {
      *
      * @internal
      */
-    // public void setIccNetworkLockEnabled(int category,
-    //         int lockop, String password, String data_imsi, String gid1, String gid2, Message onComplete);
+    public void setIccNetworkLockEnabled(int category,
+            int lockop, String password, String data_imsi, String gid1, String gid2, Message onComplete);
 
     /**
      * Use to repolling icc card status (Used by SIM ME lock related enhancement feature)
@@ -287,22 +288,22 @@ public interface IccCard {
      *                   if yes, will broadcast TelephonyIntents.ACTION_UNLOCK_SIM_LOCK to notify.
      *                   if no, will notify by original TelephonyIntents.ACTION_SIM_STATE_CHANGED.
      */
-    // public void repollIccStateForModemSmlChangeFeatrue(boolean needIntent);
+    public void repollIccStateForModemSmlChangeFeatrue(boolean needIntent);
 
     /**
      * NFC API, use to exchange SIM IO.
      *
      * @internal
      */
-    // public void exchangeSimIo(int fileID, int command,
-    //                                        int p1, int p2, int p3, String pathID, String data, String pin2, Message onComplete);
+    public void exchangeSimIo(int fileID, int command,
+            int p1, int p2, int p3, String pathID, String data, String pin2, Message onComplete);
 
     /**
      * NFC API, use to get ATR.
      *
      * @internal
      */
-    // public void iccGetAtr(Message onComplete);
+    public void iccGetAtr(Message onComplete);
 
     public String getIccCardType();
 
@@ -311,12 +312,12 @@ public interface IccCard {
      *
      * @internal
      */
-    // public void openLogicalChannelWithSw(String AID, Message onComplete);
+    public void openLogicalChannelWithSw(String AID, Message onComplete);
     /**
      * Notifies handler in case of FDN changed
      */
-    // public void registerForFdnChanged(Handler h, int what, Object obj);
-    // public void unregisterForFdnChanged(Handler h);
+    public void registerForFdnChanged(Handler h, int what, Object obj);
+    public void unregisterForFdnChanged(Handler h);
 
     // Added by M end
 }

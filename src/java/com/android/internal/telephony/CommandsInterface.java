@@ -113,6 +113,19 @@ public interface CommandsInterface {
     static final int CDMA_SMS_FAIL_CAUSE_OTHER_TERMINAL_PROBLEM     = 39;
     static final int CDMA_SMS_FAIL_CAUSE_ENCODING_PROBLEM           = 96;
 
+    //MTK AT CMD +ESMLCK
+    static final int CAT_NETWOEK                = 0;
+    static final int CAT_NETOWRK_SUBSET         = 1;
+    static final int CAT_SERVICE_PROVIDER       = 2;
+    static final int CAT_CORPORATE              = 3;
+    static final int CAT_SIM                    = 4;
+
+    static final int OP_UNLOCK                  = 0;
+    static final int OP_LOCK                    = 1;
+    static final int OP_ADD                     = 2;
+    static final int OP_REMOVE                  = 3;
+    static final int OP_PERMANENT_UNLOCK        = 4;
+
     //***** Methods
     RadioState getRadioState();
 

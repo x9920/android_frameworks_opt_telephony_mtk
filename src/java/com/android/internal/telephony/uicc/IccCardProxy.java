@@ -50,6 +50,8 @@ import com.android.internal.telephony.uicc.IccCardStatus.CardState;
 import com.android.internal.telephony.uicc.IccCardStatus.PinState;
 import com.android.internal.telephony.uicc.UiccController;
 
+import com.mediatek.internal.telephony.uicc.IccCardProxyEx;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
@@ -91,6 +93,21 @@ public class IccCardProxy extends Handler implements IccCard {
     private static final int EVENT_SUBSCRIPTION_DEACTIVATED = 502;
     private static final int EVENT_CARRIER_PRIVILIGES_LOADED = 503;
 
+    // MTK
+    private static final int EVENT_ICC_RECOVERY = 100;
+    private static final int EVENT_ICC_FDN_CHANGED = 101;
+    private static final int EVENT_NOT_AVAILABLE = 102;
+
+    private static final String ICCID_STRING_FOR_NO_SIM = "N/A";
+    private String[] PROPERTY_ICCID_SIM = {
+        "ril.iccid.sim1",
+        "ril.iccid.sim2",
+        "ril.iccid.sim3",
+        "ril.iccid.sim4",
+    };
+
+    private static final String COMMON_SLOT_PROPERTY = "";
+
     private Integer mPhoneId = null;
 
     private final Object mLock = new Object();
@@ -101,6 +118,10 @@ public class IccCardProxy extends Handler implements IccCard {
     private RegistrantList mAbsentRegistrants = new RegistrantList();
     private RegistrantList mPinLockedRegistrants = new RegistrantList();
     private RegistrantList mNetworkLockedRegistrants = new RegistrantList();
+
+    // MTK
+    private RegistrantList mRecoveryRegistrants = new RegistrantList();
+    private RegistrantList mFdnChangedRegistrants = new RegistrantList();
 
     private int mCurrentAppType = UiccController.APP_FAM_3GPP; //default to 3gpp?
     private UiccController mUiccController = null;
@@ -117,6 +138,22 @@ public class IccCardProxy extends Handler implements IccCard {
 
     public static final String ACTION_INTERNAL_SIM_STATE_CHANGED = "android.intent.action.internal_sim_state_changed";
 
+    // MTK
+    private IccCardProxyEx mIccCardProxyEx;
+
+    // Sim State events may be broadcasted before the siminfo table update has been
+    // completed. Due to this such events may be broadcasted with dummy subId for a
+    // particular slotId. Therefore, setExternalState once the siminfo table has been updated.
+    // For example, if the UI receives the sim state broadcast with the state as pin locked
+    // with dummy subId, the pin lock screen will not be displayed.
+    private BroadcastReceiver mReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED.equals(intent.getAction())) {
+                    setExternalState(mExternalState, true);
+                }
+            }};
+
     public IccCardProxy(Context context, CommandsInterface ci, int phoneId) {
         if (DBG) log("ctor: ci=" + ci + " phoneId=" + phoneId);
         mContext = context;
@@ -124,6 +161,7 @@ public class IccCardProxy extends Handler implements IccCard {
         mPhoneId = phoneId;
         mTelephonyManager = (TelephonyManager) mContext.getSystemService(
                 Context.TELEPHONY_SERVICE);
+        mIccCardProxyEx = new IccCardProxyEx(context, ci);
         mCdmaSSM = CdmaSubscriptionSourceManager.getInstance(context,
                 ci, this, EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED, null);
         mUiccController = UiccController.getInstance();
@@ -144,6 +182,7 @@ public class IccCardProxy extends Handler implements IccCard {
             mCi.unregisterForOn(this);
             mCi.unregisterForOffOrNotAvailable(this);
             mCdmaSSM.dispose(this);
+            mIccCardProxyEx.dispose();
         }
     }
 
@@ -219,6 +258,10 @@ public class IccCardProxy extends Handler implements IccCard {
                     setExternalState(State.NOT_READY);
                 }
                 break;
+            case EVENT_NOT_AVAILABLE:
+                log("handleMessage (EVENT_NOT_AVAILABLE)");
+                setExternalState(State.NOT_READY);
+                break;
             case EVENT_RADIO_ON:
                 mRadioOn = true;
                 if (!mInitialized) {
@@ -227,9 +270,29 @@ public class IccCardProxy extends Handler implements IccCard {
                 break;
             case EVENT_ICC_CHANGED:
                 if (mInitialized) {
+                    AsyncResult ar = (AsyncResult) msg.obj;
+                    int index = mPhoneId;
+
+                    if (ar != null && ar.result instanceof Integer) {
+                        index = ((Integer) ar.result).intValue();
+                        log("handleMessage (EVENT_ICC_CHANGED), index=" + index + " mPhoneId=" + mPhoneId);
+                    } else {
+                        log("handleMessage (EVENT_ICC_CHANGED), come from myself, mPhoneId=" + mPhoneId);
+                    }
+
                     updateIccAvailability();
                 }
                 break;
+            case EVENT_ICC_RECOVERY: {
+                AsyncResult ar = (AsyncResult) msg.obj;
+                Integer index = (Integer) ar.result;
+                log("handleMessage (EVENT_ICC_RECOVERY) , index = " + index);
+                // if (index == mSlotId) {
+                if (DBG) log("mRecoveryRegistrants notify");
+                mRecoveryRegistrants.notifyRegistrants();
+                // }
+                break;
+            }
             case EVENT_ICC_ABSENT:
                 mAbsentRegistrants.notifyRegistrants();
                 setExternalState(State.ABSENT);
@@ -297,6 +360,10 @@ public class IccCardProxy extends Handler implements IccCard {
                                 mPhoneId, mIccRecords.getServiceProviderName());
                     }
                 }
+                break;
+
+            case EVENT_ICC_FDN_CHANGED:
+                mFdnChangedRegistrants.notifyRegistrants();
                 break;
 
             case EVENT_CARRIER_PRIVILIGES_LOADED:
@@ -410,12 +477,19 @@ public class IccCardProxy extends Handler implements IccCard {
                 setExternalState(State.PUK_REQUIRED);
                 break;
             case APPSTATE_SUBSCRIPTION_PERSO:
+                /*  [mtk02772][ALPS00437082]
+                    mediatek platform will set network locked for all of subState (5 type of network locked)
+                */
+                setExternalState(State.PERSO_LOCKED);
+
+                /*
                 if (mUiccApplication.isPersoLocked()) {
                     mPersoSubState = mUiccApplication.getPersoSubState();
                     setExternalState(State.NETWORK_LOCKED);
                 } else {
                     setExternalState(State.UNKNOWN);
                 }
+                */
                 break;
             case APPSTATE_READY:
                 setExternalState(State.READY);
@@ -601,6 +675,15 @@ public class IccCardProxy extends Handler implements IccCard {
             case PIN_REQUIRED: return IccCardConstants.INTENT_VALUE_LOCKED_ON_PIN;
             case PUK_REQUIRED: return IccCardConstants.INTENT_VALUE_LOCKED_ON_PUK;
             case NETWORK_LOCKED: return IccCardConstants.INTENT_VALUE_LOCKED_NETWORK;
+            case PERSO_LOCKED:  // return IccCardConstants.INTENT_VALUE_LOCKED_PERSO;
+                switch (mUiccApplication.getPersoSubState()) {
+                    case PERSOSUBSTATE_SIM_NETWORK: return IccCardConstants.INTENT_VALUE_LOCKED_NETWORK;
+                    case PERSOSUBSTATE_SIM_NETWORK_SUBSET: return IccCardConstants.INTENT_VALUE_LOCKED_NETWORK_SUBSET;
+                    case PERSOSUBSTATE_SIM_CORPORATE: return IccCardConstants.INTENT_VALUE_LOCKED_CORPORATE;
+                    case PERSOSUBSTATE_SIM_SERVICE_PROVIDER: return IccCardConstants.INTENT_VALUE_LOCKED_SERVICE_PROVIDER;
+                    case PERSOSUBSTATE_SIM_SIM: return IccCardConstants.INTENT_VALUE_LOCKED_SIM;
+                    default: return null;
+                }
             case PERM_DISABLED: return IccCardConstants.INTENT_VALUE_ABSENT_ON_PERM_DISABLED;
             case CARD_IO_ERROR: return IccCardConstants.INTENT_VALUE_ICC_CARD_IO_ERROR;
             default: return null;
@@ -947,20 +1030,17 @@ public class IccCardProxy extends Handler implements IccCard {
      *
      * @return SIM ME Lock type
      */
-    /*
     public PersoSubState getNetworkPersoType() {
         if (mUiccApplication != null) {
             return mUiccApplication.getPersoSubState();
         }
         return PersoSubState.PERSOSUBSTATE_UNKNOWN;
     }
-    */
 
     /**
      * Check whether ICC network lock is enabled
      * This is an async call which returns lock state to applications directly
      */
-    /*
     @Override
     public void queryIccNetworkLock(int category, Message onComplete) {
         if (DBG) log("queryIccNetworkLock(): category =  " + category);
@@ -975,13 +1055,11 @@ public class IccCardProxy extends Handler implements IccCard {
             }
         }
     }
-    */
 
     /**
      * Set the ICC network lock enabled or disabled
      * When the operation is complete, onComplete will be sent to its handler
      */
-    /*
     @Override
     public void setIccNetworkLockEnabled(int category,
             int lockop, String password, String data_imsi, String gid1, String gid2, Message onComplete) {
@@ -999,16 +1077,14 @@ public class IccCardProxy extends Handler implements IccCard {
             }
         }
     }
-    */
 
     /**
      * Used by SIM ME lock related enhancement feature(Modem SML change feature).
      */
-    /*
     public void repollIccStateForModemSmlChangeFeatrue(boolean needIntent) {
         if (DBG) log("repollIccStateForModemSmlChangeFeatrue, needIntent = " + needIntent);
         synchronized (mLock) {
-            mUiccController.repollIccStateForModemSmlChangeFeatrue(mSlotId, needIntent);
+            mUiccController.repollIccStateForModemSmlChangeFeatrue(mPhoneId, needIntent);
         }
     }
 
@@ -1030,7 +1106,6 @@ public class IccCardProxy extends Handler implements IccCard {
             mUiccCard.iccOpenChannelWithSw(AID, onComplete);
         }
     }
-    */
 
     // retrun usim property or use uicccardapplication app type
     public String getIccCardType() {
@@ -1040,7 +1115,6 @@ public class IccCardProxy extends Handler implements IccCard {
         return "";
     }
 
-    /*
     public void registerForRecovery(Handler h, int what, Object obj) {
         synchronized (mLock) {
             Registrant r = new Registrant(h, what, obj);
@@ -1058,12 +1132,10 @@ public class IccCardProxy extends Handler implements IccCard {
             mRecoveryRegistrants.remove(h);
         }
     }
-    */
 
     /**
      * Notifies handler in case of FDN changed
      */
-    /*
     @Override
     public void registerForFdnChanged(Handler h, int what, Object obj) {
         synchronized (mLock) {
@@ -1085,7 +1157,6 @@ public class IccCardProxy extends Handler implements IccCard {
             mFdnChangedRegistrants.remove(h);
         }
     }
-    */
 
     // Added by M end
 }
