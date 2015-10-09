@@ -185,6 +185,28 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final int EVENT_IMS_STATE_DONE                    = 47;
     protected static final int EVENT_IMS_CAPABILITY_CHANGED            = 48;
 
+    // MTK events
+    protected static final int EVENT_DATA_CONNECTION_DETACHED = 100;
+    protected static final int EVENT_INVALID_SIM_INFO = 101; //ALPS00248788
+    protected static final int EVENT_PS_NETWORK_STATE_CHANGED = 102;
+    protected static final int EVENT_IMEI_LOCK = 103; /* ALPS00296298 */
+    protected static final int EVENT_DISABLE_EMMRRS_STATUS = 104;
+    protected static final int EVENT_ENABLE_EMMRRS_STATUS = 105;
+    protected static final int EVENT_ICC_REFRESH = 106;
+    protected static final int EVENT_FEMTO_CELL_INFO = 107;
+    protected static final int EVENT_GET_CELL_INFO_LIST_BY_RATE = 108;
+    protected static final int EVENT_SET_IMS_ENABLED_DONE = 109;
+    protected static final int EVENT_SET_IMS_DISABLE_DONE = 110;
+    protected static final int EVENT_IMS_DISABLED_URC = 111;
+    protected static final int EVENT_IMS_REGISTRATION_INFO = 112;
+
+    // MTK CDMA events
+    protected static final int EVENT_QUERY_NITZ_TIME        = 200;
+    protected static final int EVENT_GET_NITZ_TIME          = 201;
+    protected static final int EVENT_NETWORK_TYPE_CHANGED   = 202;
+    protected static final int EVENT_ETS_DEV_CHANGED        = 203;
+    protected static final int EVENT_SET_MDN_DONE           = 204;
+
     protected static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
     /**
