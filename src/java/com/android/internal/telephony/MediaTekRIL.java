@@ -1258,9 +1258,11 @@ public class MediaTekRIL extends RIL implements CommandsInterface {
                 break;
 
             case RIL_UNSOL_RESPONSE_PS_NETWORK_STATE_CHANGED:
-                rewindAndReplace = true;
-                newResponseCode = RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED;
-                break;
+                if (RILJ_LOGD) unsljLog(response);
+
+                mPsNetworkStateRegistrants
+                    .notifyRegistrants(new AsyncResult(null, null, null));
+            break;
 
             case RIL_UNSOL_SMS_READY_NOTIFICATION:
                 Rlog.e(RILJ_LOG_TAG, "RIL_UNSOL_SMS_READY_NOTIFICATION: stub!");
