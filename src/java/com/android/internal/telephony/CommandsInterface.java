@@ -2180,6 +2180,9 @@ public interface CommandsInterface {
      */
     void unregisterForCommonSlotNoChanged(Handler h);
 
+    void registerForPsNetworkStateChanged(Handler h, int what, Object obj);
+    void unregisterForPsNetworkStateChanged(Handler h);
+
     /**
      * unlike the register* methods, there's only one Neighboring cell info handler
      *
