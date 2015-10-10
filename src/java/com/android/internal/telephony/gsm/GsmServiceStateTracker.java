@@ -812,12 +812,18 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
                             if (states.length >= 4 && states[3] != null) {
                                 type = Integer.parseInt(states[3]);
                             }
-                            if ((states.length >= 5 ) &&
-                                    (regState == ServiceState.RIL_REG_STATE_DENIED)) {
-                                mNewReasonDataDenied = Integer.parseInt(states[4]);
+                            if (states.length >= 5 && states[4] != null) {
+                                log("<cell_data_speed_support> " + states[4]);
                             }
-                            if (states.length >= 6) {
-                                mNewMaxDataCalls = Integer.parseInt(states[5]);
+                            if (states.length >= 6 && states[5] != null) {
+                                log("<max_data_bearer_capability> " + states[5]);
+                            }
+                            if ((states.length >= 7) &&
+                                    (regState == ServiceState.RIL_REG_STATE_DENIED)) {
+                                mNewReasonDataDenied = Integer.parseInt(states[6]);
+                            }
+                            if (states.length >= 8) {
+                                mNewMaxDataCalls = Integer.parseInt(states[7]);
                             }
                         } catch (NumberFormatException ex) {
                             loge("error parsing GprsRegistrationState: " + ex);
