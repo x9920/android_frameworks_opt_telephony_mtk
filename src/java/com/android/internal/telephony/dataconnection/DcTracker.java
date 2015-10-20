@@ -2553,11 +2553,6 @@ public final class DcTracker extends DcTrackerBase {
      * Data Connections and setup the preferredApn.
      */
     private void createAllApnList() {
-        // so why could this be null?
-        if (mAllApnSettings == null) {
-            mAllApnSettings = new ArrayList<ApnSetting>();
-        }
-
         mAllApnSettings.clear();
         String operator = getOperatorNumeric();
         int radioTech = mPhone.getServiceState().getRilDataRadioTechnology();
